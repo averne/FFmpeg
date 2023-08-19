@@ -61,6 +61,9 @@ static const enum AVPixelFormat h263_hwaccel_pixfmt_list_420[] = {
 #if CONFIG_H263_VIDEOTOOLBOX_HWACCEL || CONFIG_MPEG4_VIDEOTOOLBOX_HWACCEL
     AV_PIX_FMT_VIDEOTOOLBOX,
 #endif
+#if CONFIG_MPEG4_TX1_HWACCEL
+    AV_PIX_FMT_TX1,
+#endif
     AV_PIX_FMT_YUV420P,
     AV_PIX_FMT_NONE
 };
@@ -700,6 +703,9 @@ static const AVCodecHWConfigInternal *const h263_hw_config_list[] = {
 #endif
 #if CONFIG_MPEG4_VDPAU_HWACCEL
     HWACCEL_VDPAU(mpeg4),
+#endif
+#if CONFIG_MPEG4_TX1_HWACCEL
+    HWACCEL_TX1(mpeg4),
 #endif
 #if CONFIG_H263_VIDEOTOOLBOX_HWACCEL
     HWACCEL_VIDEOTOOLBOX(h263),

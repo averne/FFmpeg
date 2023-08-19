@@ -530,7 +530,8 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
                      CONFIG_HEVC_VAAPI_HWACCEL + \
                      CONFIG_HEVC_VIDEOTOOLBOX_HWACCEL + \
                      CONFIG_HEVC_VDPAU_HWACCEL + \
-                     CONFIG_HEVC_VULKAN_HWACCEL)
+                     CONFIG_HEVC_VULKAN_HWACCEL + \
+                     CONFIG_HEVC_TX1_HWACCEL)
     enum AVPixelFormat pix_fmts[HWACCEL_MAX + 2], *fmt = pix_fmts;
     int ret;
 
@@ -562,6 +563,9 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
 #if CONFIG_HEVC_VULKAN_HWACCEL
         *fmt++ = AV_PIX_FMT_VULKAN;
 #endif
+#if CONFIG_HEVC_TX1_HWACCEL
+        *fmt++ = AV_PIX_FMT_TX1;
+#endif
         break;
     case AV_PIX_FMT_YUV420P10:
 #if CONFIG_HEVC_DXVA2_HWACCEL
@@ -588,6 +592,9 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
 #endif
 #if CONFIG_HEVC_NVDEC_HWACCEL
         *fmt++ = AV_PIX_FMT_CUDA;
+#endif
+#if CONFIG_HEVC_TX1_HWACCEL
+        *fmt++ = AV_PIX_FMT_TX1;
 #endif
         break;
     case AV_PIX_FMT_YUV444P:
@@ -708,6 +715,7 @@ static int hls_slice_header(SliceHeader *sh, const HEVCContext *s, GetBitContext
     const HEVCVPS *vps;
     unsigned pps_id, layer_idx;
     int i, ret;
+    int nvidia_skip_len_start;
 
     // Coded parameters
     sh->first_slice_in_pic_flag = get_bits1(gb);
@@ -782,6 +790,8 @@ static int hls_slice_header(SliceHeader *sh, const HEVCContext *s, GetBitContext
             return AVERROR_INVALIDDATA;
         }
 
+        nvidia_skip_len_start = get_bits_left(gb);
+
         // when flag is not present, picture is inferred to be output
         sh->pic_output_flag = 1;
         if (pps->output_flag_present_flag)
@@ -841,6 +851,7 @@ static int hls_slice_header(SliceHeader *sh, const HEVCContext *s, GetBitContext
             }
             sh->long_term_ref_pic_set_size = pos - get_bits_left(gb);
 
+            sh->nvidia_skip_length = nvidia_skip_len_start - get_bits_left(gb);
             if (sps->temporal_mvp_enabled)
                 sh->slice_temporal_mvp_enabled_flag = get_bits1(gb);
             else
@@ -853,6 +864,7 @@ static int hls_slice_header(SliceHeader *sh, const HEVCContext *s, GetBitContext
             sh->short_term_rps                  = NULL;
             sh->long_term_ref_pic_set_size      = 0;
             sh->slice_temporal_mvp_enabled_flag = 0;
+            sh->nvidia_skip_length              = nvidia_skip_len_start - get_bits_left(gb);
         }
 
         sh->inter_layer_pred = 0;
@@ -4107,6 +4119,9 @@ const FFCodec ff_hevc_decoder = {
 #endif
 #if CONFIG_HEVC_VULKAN_HWACCEL
                                HWACCEL_VULKAN(hevc),
+#endif
+#if CONFIG_HEVC_TX1_HWACCEL
+                               HWACCEL_TX1(hevc),
 #endif
                                NULL
                            },

@@ -784,7 +784,8 @@ static enum AVPixelFormat get_pixel_format(H264Context *h, int force_callback)
                      CONFIG_H264_VAAPI_HWACCEL + \
                      CONFIG_H264_VIDEOTOOLBOX_HWACCEL + \
                      CONFIG_H264_VDPAU_HWACCEL + \
-                     CONFIG_H264_VULKAN_HWACCEL)
+                     CONFIG_H264_VULKAN_HWACCEL + \
+                     CONFIG_H264_TX1_HWACCEL)
     enum AVPixelFormat pix_fmts[HWACCEL_MAX + 2], *fmt = pix_fmts;
 
     switch (h->ps.sps->bit_depth_luma) {
@@ -888,6 +889,9 @@ static enum AVPixelFormat get_pixel_format(H264Context *h, int force_callback)
 #endif
 #if CONFIG_H264_VAAPI_HWACCEL
             *fmt++ = AV_PIX_FMT_VAAPI;
+#endif
+#if CONFIG_H264_TX1_HWACCEL
+        *fmt++ = AV_PIX_FMT_TX1;
 #endif
             if (h->avctx->color_range == AVCOL_RANGE_JPEG)
                 *fmt++ = AV_PIX_FMT_YUVJ420P;

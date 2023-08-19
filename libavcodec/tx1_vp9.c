@@ -1,0 +1,554 @@
+/*
+ * Copyright (c) 2023 averne <averne381@gmail.com>
+ *
+ * This file is part of FFmpeg.
+ *
+ * FFmpeg is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * FFmpeg is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with FFmpeg; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <stdbool.h>
+
+#include "config_components.h"
+
+#include "avcodec.h"
+#include "hwaccel_internal.h"
+#include "internal.h"
+#include "hwconfig.h"
+#include "vp9data.h"
+#include "vp9dec.h"
+#include "decode.h"
+#include "tx1_decode.h"
+
+#include "libavutil/pixdesc.h"
+#include "libavutil/tx1_host1x.h"
+
+typedef struct TX1VP9DecodeContext {
+    TX1DecodeContext core;
+
+    uint32_t prob_tab_off;
+
+    AVTX1Map common_map;
+    uint32_t segment_rw1_off, segment_rw2_off, tile_sizes_off, filter_off,
+             col_mvrw1_off, col_mvrw2_off, ctx_counter_off;
+
+    bool prev_show_frame;
+
+    AVFrame *refs[3], *current_frame;
+} TX1VP9DecodeContext;
+
+/* Size (width, height) of a macroblock */
+#define MB_SIZE 16
+
+/* Maximum size (width, height) of a superblock */
+#define SB_SIZE 64
+
+#define CEILDIV(a, b) (((a) + (b) - 1) / (b))
+
+/* Prediction modes aren't layed out in the same order in ffmpeg's defaults than in hardware */
+static const uint8_t pmconv[] = { 2, 0, 1, 3, 4, 5, 6, 8, 7, 9 };
+
+static int tx1_vp9_decode_uninit(AVCodecContext *avctx) {
+    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+
+    int err;
+
+    av_log(avctx, AV_LOG_DEBUG, "Deinitializing TX1 VP9 decoder\n");
+
+    err = ff_tx1_map_destroy(&ctx->common_map);
+    if (err < 0)
+        return err;
+
+    err = ff_tx1_decode_uninit(avctx, &ctx->core);
+    if (err < 0)
+        return err;
+
+    return 0;
+}
+
+static int tx1_vp9_decode_init(AVCodecContext *avctx) {
+    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+#ifdef __SWITCH__
+    AVHWDeviceContext *hw_device_ctx;
+    AVTX1DeviceContext *device_hwctx;
+#endif
+
+    uint32_t aligned_width, aligned_height, max_sb_size,
+             segment_rw_size, filter_size, col_mvrw_size, ctx_counter_size,
+             common_map_size;
+    uint8_t *mem;
+    int err;
+
+    av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 VP9 decoder\n");
+
+    ctx->core.pic_setup_off      = 0;
+    ctx->core.status_off         = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp8_pic_s),
+                                           FF_TX1_MAP_ALIGN);
+    ctx->core.cmdbuf_off         = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
+                                           FF_TX1_MAP_ALIGN);
+    ctx->prob_tab_off            = FFALIGN(ctx->core.cmdbuf_off    + 2*FF_TX1_MAP_ALIGN,
+                                           FF_TX1_MAP_ALIGN);
+    ctx->core.bitstream_off      = FFALIGN(ctx->prob_tab_off       + 0xf00,
+                                           FF_TX1_MAP_ALIGN);
+    ctx->core.input_map_size     = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
+                                           0x1000);
+
+    ctx->core.max_cmdbuf_size    =  ctx->prob_tab_off        - ctx->core.cmdbuf_off;
+    ctx->core.max_bitstream_size =  ctx->core.input_map_size - ctx->core.bitstream_off;
+
+    err = ff_tx1_decode_init(avctx, &ctx->core);
+    if (err < 0)
+        goto fail;
+
+    aligned_width    = FFALIGN(avctx->width,  MB_SIZE);
+    aligned_height   = FFALIGN(avctx->height, MB_SIZE);
+    max_sb_size      = CEILDIV(aligned_width, 64) * CEILDIV(aligned_height, 64);
+    segment_rw_size  = FFALIGN(max_sb_size * 32, 0x100);
+    filter_size      = FFALIGN(avctx->height, 64) * 988;
+    col_mvrw_size    = max_sb_size * 1024;
+    ctx_counter_size = FFALIGN(0x33d0, 0x100);
+
+    ctx->segment_rw1_off = 0;
+    ctx->segment_rw2_off = FFALIGN(ctx->segment_rw1_off + segment_rw_size, FF_TX1_MAP_ALIGN);
+    ctx->tile_sizes_off  = FFALIGN(ctx->segment_rw2_off + segment_rw_size, FF_TX1_MAP_ALIGN);
+    ctx->filter_off      = FFALIGN(ctx->tile_sizes_off   + 0x700,          FF_TX1_MAP_ALIGN);
+    ctx->col_mvrw1_off   = FFALIGN(ctx->filter_off      + filter_size,     FF_TX1_MAP_ALIGN);
+    ctx->col_mvrw2_off   = FFALIGN(ctx->col_mvrw1_off   + col_mvrw_size,   FF_TX1_MAP_ALIGN);
+    ctx->ctx_counter_off = FFALIGN(ctx->col_mvrw2_off   + col_mvrw_size,   FF_TX1_MAP_ALIGN);
+    common_map_size      = FFALIGN(ctx->ctx_counter_off + ctx_counter_size, 0x1000);
+
+#ifdef __SWITCH__
+    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    device_hwctx  = hw_device_ctx->hwctx;
+
+    ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
+#endif
+
+    err = ff_tx1_map_create(&ctx->common_map, common_map_size, 0x100, NVMAP_CACHE_OP_INV);
+    if (err < 0)
+        goto fail;
+
+    mem = ff_tx1_map_get_addr(&ctx->common_map);
+
+    memset(mem + ctx->segment_rw1_off, 0, segment_rw_size);
+    memset(mem + ctx->segment_rw2_off, 0, segment_rw_size);
+
+    memset(mem + ctx->tile_sizes_off, 0, 0x700);
+    ((uint16_t *)(mem + ctx->tile_sizes_off))[0x37a] = 9;
+    ((uint16_t *)(mem + ctx->tile_sizes_off))[0x37b] = 1;
+
+    memset(mem + ctx->col_mvrw1_off, 0, col_mvrw_size);
+    memset(mem + ctx->col_mvrw2_off, 0, col_mvrw_size);
+
+    memset(mem + ctx->ctx_counter_off, 0, ctx_counter_size);
+
+    return 0;
+
+fail:
+    tx1_vp9_decode_uninit(avctx);
+    return err;
+}
+
+static void tx1_vp9_init_probs(nvdec_vp9EntropyProbs_t *probs, VP9Context *s) {
+    VP9SharedContext *h = &s->s;
+
+    int i, j;
+
+    for (i = 0; i < 10; ++i) {
+        for (j = 0; j < 10; ++j) {
+            memcpy(probs->kf_bmode_prob[i][j], ff_vp9_default_kf_ymode_probs[pmconv[i]][pmconv[j]], 8);
+            probs->kf_bmode_probB[i][j][0]   = ff_vp9_default_kf_ymode_probs[pmconv[i]][pmconv[j]][8];
+        }
+        memcpy(probs->kf_uv_mode_prob[i], ff_vp9_default_kf_uvmode_probs[pmconv[i]], 8);
+        probs->kf_uv_mode_probB[i][0]   = ff_vp9_default_kf_uvmode_probs[pmconv[i]][8];
+    }
+
+    for (i = 0; i < 3; ++i)
+        probs->ref_pred_probs[i] = *s->intra_pred_data[i];
+
+    memcpy(probs->mb_segment_tree_probs, h->h.segmentation.prob,      7);
+    memcpy(probs->segment_pred_probs,    h->h.segmentation.pred_prob, 3);
+    // ref_scores
+    // prob_comppred
+}
+
+static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
+                                 VP9Context *s, bool init)
+{
+    ProbContext *p = &s->prob.p;
+
+    int i, j, k, l;
+
+    if (init) {
+        memset(probs, 0, sizeof(nvdec_vp9EntropyProbs_t));
+        tx1_vp9_init_probs(probs, s);
+    }
+
+    for (i = 0; i < 7; ++i)
+        memcpy(probs->a.inter_mode_prob[i], p->mv_mode[i], 3);
+
+    memcpy(probs->a.intra_inter_prob, p->intra, 4);
+
+    for (i = 0; i < 10; ++i) {
+        memcpy(probs->a.uv_mode_prob[i], p->uv_mode[pmconv[i]], 8);
+        probs->a.uv_mode_probB[i][0]   = p->uv_mode[pmconv[i]][8];
+    }
+
+    for (i = 0; i < 2; ++i) {
+        memcpy(probs->a.tx8x8_prob  [i], &p->tx8p [i], 1);
+        memcpy(probs->a.tx16x16_prob[i],  p->tx16p[i], 2);
+        memcpy(probs->a.tx32x32_prob[i],  p->tx32p[i], 3);
+    }
+
+    for (i = 0; i < 4; ++i) {
+        memcpy(probs->a.sb_ymode_prob[i], p->y_mode[i], 8);
+        probs->a.sb_ymode_probB[i][0]   = p->y_mode[i][8];
+    }
+
+    for (i = 0; i < 4; ++i) {
+        for (j = 0; j < 4; ++j) {
+            memcpy(probs->a.partition_prob[0][4*(3-i)+j],
+                   &ff_vp9_default_kf_partition_probs[i][j], 3);
+            memcpy(probs->a.partition_prob[1][4*(3-i)+j], &p->partition[i][j], 3);
+        }
+    }
+
+    memcpy(probs->a.switchable_interp_prob, p->filter, 4 * 2);
+    memcpy(probs->a.comp_inter_prob,        p->comp,   5);
+    memcpy(probs->a.mbskip_probs,           p->skip,   3);
+
+    memcpy(probs->a.nmvc.joints, p->mv_joint, 3);
+    for (i = 0; i < 2; ++i) {
+        probs->a.nmvc.sign     [i]       = p->mv_comp[i].sign;
+        probs->a.nmvc.class0   [i][0]    = p->mv_comp[i].class0;
+        probs->a.nmvc.class0_hp[i]       = p->mv_comp[i].class0_hp;
+        probs->a.nmvc.hp       [i]       = p->mv_comp[i].hp;
+        memcpy(probs->a.nmvc.fp       [i], p->mv_comp[i].fp,        3);
+        memcpy(probs->a.nmvc.classes  [i], p->mv_comp[i].classes,   10);
+        memcpy(probs->a.nmvc.class0_fp[i], p->mv_comp[i].class0_fp, 2 * 3);
+        memcpy(probs->a.nmvc.bits     [i], p->mv_comp[i].bits,      10);
+    }
+
+    memcpy(probs->a.single_ref_prob, p->single_ref, 5 * 2);
+    memcpy(probs->a.comp_ref_prob,   p->comp_ref,   5);
+
+    for (i = 0; i < 2; ++i) {
+        for (j = 0; j < 2; ++j) {
+            for (k = 0; k < 6; ++k) {
+                for (l = 0; l < 6; ++l) {
+                    memcpy(probs->a.probCoeffs     [i][j][k][l], s->prob.coef[0][i][j][k][l], 3);
+                    memcpy(probs->a.probCoeffs8x8  [i][j][k][l], s->prob.coef[1][i][j][k][l], 3);
+                    memcpy(probs->a.probCoeffs16x16[i][j][k][l], s->prob.coef[2][i][j][k][l], 3);
+                    memcpy(probs->a.probCoeffs32x32[i][j][k][l], s->prob.coef[3][i][j][k][l], 3);
+                }
+            }
+        }
+    }
+}
+
+static void tx1_vp9_set_tile_sizes(uint16_t *sizes, VP9Context *s) {
+    int i, j;
+
+    for (i = 0; i < s->s.h.tiling.tile_rows; ++i) {
+        for (j = 0; j < s->s.h.tiling.tile_cols; ++j) {
+            sizes[0] = (s->sb_cols * (j + 1) >> s->s.h.tiling.log2_tile_cols) -
+                       (s->sb_cols *  j      >> s->s.h.tiling.log2_tile_cols);
+            sizes[1] = (s->sb_rows * (i + 1) >> s->s.h.tiling.log2_tile_rows) -
+                       (s->sb_rows *  i      >> s->s.h.tiling.log2_tile_rows);
+            sizes += 2;
+        }
+    }
+}
+
+static void tx1_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecContext *avctx,
+                                        TX1VP9DecodeContext *ctx)
+{
+    VP9Context       *s = avctx->priv_data;
+    VP9SharedContext *h = &s->s;
+
+    uint8_t *mem;
+    int i;
+
+    /* Note: the stride is divided by 2 when the depth is > 8 (not supported on T210) */
+#define FWIDTH(f)      ((f && f->private_ref) ? f->width       : 0)
+#define FHEIGHT(f)     ((f && f->private_ref) ? f->height      : 0)
+#define FSTRIDE(f, c)  ((f && f->private_ref) ? f->linesize[c] : 0)
+
+    /* Note: the v1 substructure isn't filled out on T210 */
+    *setup = (nvdec_vp9_pic_s){
+        .tileformat               = 0, /* TBL */
+        .gob_height               = 0, /* GOB_2 */
+
+        .Vp9BsdCtrlOffset         = FFALIGN(avctx->height, 64) * 912 / 256,
+
+        .ref0_width               = FWIDTH (h->refs[h->h.refidx[0]].f),
+        .ref0_height              = FHEIGHT(h->refs[h->h.refidx[0]].f),
+        .ref0_stride              = {
+            FSTRIDE(h->refs[h->h.refidx[0]].f, 0),
+            FSTRIDE(h->refs[h->h.refidx[0]].f, 1),
+        },
+
+        .ref1_width               = FWIDTH (h->refs[h->h.refidx[1]].f),
+        .ref1_height              = FHEIGHT(h->refs[h->h.refidx[1]].f),
+        .ref1_stride              = {
+            FSTRIDE(h->refs[h->h.refidx[1]].f, 0),
+            FSTRIDE(h->refs[h->h.refidx[1]].f, 1),
+        },
+
+        .ref2_width               = FWIDTH (h->refs[h->h.refidx[2]].f),
+        .ref2_height              = FHEIGHT(h->refs[h->h.refidx[2]].f),
+        .ref2_stride              = {
+            FSTRIDE(h->refs[h->h.refidx[2]].f, 0),
+            FSTRIDE(h->refs[h->h.refidx[2]].f, 1),
+        },
+
+        .width                    = FWIDTH (h->frames[CUR_FRAME].tf.f),
+        .height                   = FHEIGHT(h->frames[CUR_FRAME].tf.f),
+        .framestride              = {
+            FSTRIDE(h->frames[CUR_FRAME].tf.f, 0),
+            FSTRIDE(h->frames[CUR_FRAME].tf.f, 1),
+        },
+
+        .keyFrame                 = h->h.keyframe,
+        .prevIsKeyFrame           = s->last_keyframe,
+        .errorResilient           = h->h.errorres,
+        .prevShowFrame            = ctx->prev_show_frame,
+        .intraOnly                = h->h.intraonly,
+
+        .refFrameSignBias         = {
+            0,
+            h->h.signbias[0], h->h.signbias[1], h->h.signbias[2],
+        },
+
+        .loopFilterLevel          = h->h.filter.level,
+        .loopFilterSharpness      = h->h.filter.sharpness,
+
+        .qpYAc                    = h->h.yac_qi,
+        .qpYDc                    = h->h.ydc_qdelta,
+        .qpChAc                   = h->h.uvdc_qdelta,
+        .qpChDc                   = h->h.uvac_qdelta,
+
+        .lossless                 = h->h.lossless,
+        .transform_mode           = h->h.txfmmode,
+        .allow_high_precision_mv  = h->h.keyframe ? 0 : h->h.highprecisionmvs,
+        .mcomp_filter_type        = h->h.filtermode,
+        .comp_pred_mode           = h->h.comppredmode,
+        .comp_fixed_ref           = h->h.allowcompinter ? h->h.fixcompref + 1 : 0,
+        .comp_var_ref             = {
+            h->h.allowcompinter ? h->h.varcompref[0] + 1 : 0,
+            h->h.allowcompinter ? h->h.varcompref[1] + 1 : 0,
+        },
+
+        .log2_tile_columns        = h->h.tiling.log2_tile_cols,
+        .log2_tile_rows           = h->h.tiling.log2_tile_rows,
+
+        .segmentEnabled           = h->h.segmentation.enabled,
+        .segmentMapUpdate         = h->h.segmentation.update_map,
+        .segmentMapTemporalUpdate = h->h.segmentation.temporal,
+        .segmentFeatureMode       = h->h.segmentation.absolute_vals,
+        .modeRefLfEnabled         = h->h.lf_delta.enabled,
+        .mbRefLfDelta             = {
+            h->h.lf_delta.ref[0],  h->h.lf_delta.ref[1],
+            h->h.lf_delta.ref[2],  h->h.lf_delta.ref[3],
+        },
+        .mbModeLfDelta            = {
+            h->h.lf_delta.mode[0], h->h.lf_delta.mode[1],
+        },
+    };
+
+    for (i = 0; i < 8; ++i) {
+        setup->segmentFeatureEnable[i][0] = h->h.segmentation.feat[i].q_enabled;
+        setup->segmentFeatureEnable[i][1] = h->h.segmentation.feat[i].lf_enabled;
+        setup->segmentFeatureEnable[i][2] = h->h.segmentation.feat[i].ref_enabled;
+        setup->segmentFeatureEnable[i][3] = h->h.segmentation.feat[i].skip_enabled;
+
+        setup->segmentFeatureData[i][0]   = h->h.segmentation.feat[i].q_val;
+        setup->segmentFeatureData[i][1]   = h->h.segmentation.feat[i].lf_val;
+        setup->segmentFeatureData[i][2]   = h->h.segmentation.feat[i].ref_val;
+        setup->segmentFeatureData[i][3]   = 0;
+    }
+
+    mem = ff_tx1_map_get_addr(&ctx->common_map);
+
+    tx1_vp9_set_tile_sizes((uint16_t *)(mem + ctx->tile_sizes_off), s);
+
+    ctx->prev_show_frame = !h->h.invisible;
+}
+
+static int tx1_vp9_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP9SharedContext *h,
+                                  TX1VP9DecodeContext *ctx, AVFrame *cur_frame)
+{
+    FrameDecodeData *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    TX1Frame         *tf = fdd->hwaccel_priv;
+    AVTX1Map  *input_map = (AVTX1Map *)tf->input_map_ref->data;
+
+    uint32_t col_mvwrite_off, col_mvread_off;
+    int err;
+
+    if (ctx->core.frame_idx % 2 == 0)
+        col_mvwrite_off = ctx->col_mvrw1_off, col_mvread_off = ctx->col_mvrw2_off;
+    else
+        col_mvwrite_off = ctx->col_mvrw2_off, col_mvread_off = ctx->col_mvrw1_off;
+
+    err = ff_tx1_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
+    if (err < 0)
+        return err;
+
+    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
+                      FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, VP9));
+    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
+                      FF_TX1_ENUM(NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE, VP9) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1));
+    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
+                      FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
+
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
+                      input_map,        ctx->core.pic_setup_off,     NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
+                      input_map,        ctx->core.bitstream_off,     NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
+                      input_map,        ctx->core.status_off,        NVHOST_RELOC_TYPE_DEFAULT);
+
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_PROB_TAB_BUF_OFFSET,
+                      input_map,        ctx->prob_tab_off,           NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_CTX_COUNTER_BUF_OFFSET,
+                      &ctx->common_map, ctx->ctx_counter_off,        NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_TILE_SIZE_BUF_OFFSET,
+                      &ctx->common_map, ctx->tile_sizes_off,         NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_COL_MVWRITE_BUF_OFFSET,
+                      &ctx->common_map, col_mvwrite_off,             NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_COL_MVREAD_BUF_OFFSET,
+                      &ctx->common_map, col_mvread_off,              NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_SEGMENT_READ_BUF_OFFSET,
+                      &ctx->common_map, ctx->segment_rw1_off,        NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_SEGMENT_WRITE_BUF_OFFSET,
+                      &ctx->common_map, ctx->segment_rw2_off,        NVHOST_RELOC_TYPE_DEFAULT);
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_FILTER_BUFFER_OFFSET,
+                      &ctx->common_map, ctx->filter_off,             NVHOST_RELOC_TYPE_DEFAULT);
+
+#define PUSH_FRAME(fr, offset) ({                                                   \
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,       \
+                      ff_tx1_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,       \
+                      ff_tx1_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
+                      NVHOST_RELOC_TYPE_DEFAULT);                                   \
+})
+
+    PUSH_FRAME(ctx->refs[0],       0);
+    PUSH_FRAME(ctx->refs[1],       1);
+    PUSH_FRAME(ctx->refs[2],       2);
+    PUSH_FRAME(ctx->current_frame, 3);
+
+    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
+                      FF_TX1_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
+
+    err = ff_tx1_cmdbuf_end(cmdbuf);
+    if (err < 0)
+        return err;
+
+    if (h->h.segmentation.update_map)
+        FFSWAP(uint32_t, ctx->segment_rw1_off, ctx->segment_rw2_off);
+
+    return 0;
+}
+
+static int tx1_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+    VP9Context            *s = avctx->priv_data;
+    VP9SharedContext      *h = &s->s;
+    AVFrame           *frame = h->frames[CUR_FRAME].tf.f;
+    FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
+    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+
+    TX1Frame *tf;
+    AVTX1Map *input_map;
+    uint8_t *mem;
+    int err;
+
+    av_log(avctx, AV_LOG_DEBUG, "Starting VP9-TX1 frame with pixel format %s\n",
+           av_get_pix_fmt_name(avctx->sw_pix_fmt));
+
+    err = ff_tx1_start_frame(avctx, frame, &ctx->core);
+    if (err < 0)
+        return err;
+
+    tf = fdd->hwaccel_priv;
+    input_map = (AVTX1Map *)tf->input_map_ref->data;
+    mem = ff_tx1_map_get_addr(input_map);
+
+    tx1_vp9_prepare_frame_setup((nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
+    tx1_vp9_update_probs((nvdec_vp9EntropyProbs_t *)(mem + ctx->prob_tab_off), s, ctx->core.new_input_buffer);
+
+    ctx->refs[0] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[0]].f, h->frames[CUR_FRAME].tf.f);
+    ctx->refs[1] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[1]].f, h->frames[CUR_FRAME].tf.f);
+    ctx->refs[2] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[2]].f, h->frames[CUR_FRAME].tf.f);
+    ctx->current_frame = h->frames[CUR_FRAME].tf.f;
+
+    return 0;
+}
+
+static int tx1_vp9_end_frame(AVCodecContext *avctx) {
+    VP9SharedContext      *h = avctx->priv_data;
+    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    AVFrame           *frame = ctx->current_frame;
+    FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
+    TX1Frame             *tf = fdd->hwaccel_priv;
+    AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;
+
+    nvdec_vp9_pic_s *setup;
+    uint8_t *mem;
+    int err;
+
+    av_log(avctx, AV_LOG_DEBUG, "Ending VP9-TX1 frame with %u slices -> %u bytes\n",
+           ctx->core.num_slices, ctx->core.bitstream_len);
+
+    mem = ff_tx1_map_get_addr(input_map);
+
+    setup = (nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off);
+    setup->bitstream_size = ctx->core.bitstream_len;
+
+    err = tx1_vp9_prepare_cmdbuf(&ctx->core.cmdbuf, h, ctx, frame);
+    if (err < 0)
+        return err;
+
+    return ff_tx1_end_frame(avctx, frame, &ctx->core, NULL, 0);
+}
+
+static int tx1_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
+                                uint32_t buf_size)
+{
+    VP9SharedContext       *h = avctx->priv_data;
+    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    AVFrame           *frame = ctx->current_frame;
+
+    int offset = h->h.uncompressed_header_size + h->h.compressed_header_size;
+
+    return ff_tx1_decode_slice(avctx, frame, buf + offset, buf_size - offset, false);
+}
+
+#if CONFIG_VP9_TX1_HWACCEL
+const FFHWAccel ff_vp9_tx1_hwaccel = {
+    .p.name               = "vp9_tx1",
+    .p.type               = AVMEDIA_TYPE_VIDEO,
+    .p.id                 = AV_CODEC_ID_VP9,
+    .p.pix_fmt            = AV_PIX_FMT_TX1,
+    .start_frame          = &tx1_vp9_start_frame,
+    .end_frame            = &tx1_vp9_end_frame,
+    .decode_slice         = &tx1_vp9_decode_slice,
+    .init                 = &tx1_vp9_decode_init,
+    .uninit               = &tx1_vp9_decode_uninit,
+    .frame_params         = &ff_tx1_frame_params,
+    .priv_data_size       = sizeof(TX1VP9DecodeContext),
+    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
+};
+#endif

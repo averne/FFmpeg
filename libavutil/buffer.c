@@ -90,6 +90,28 @@ AVBufferRef *av_buffer_alloc(size_t size)
     return ret;
 }
 
+AVBufferRef *av_buffer_aligned_alloc(size_t size, size_t align)
+{
+    AVBufferRef *ret = NULL;
+    uint8_t    *data = NULL;
+
+#if HAVE_POSIX_MEMALIGN
+    if (posix_memalign((void **)&data, align, size))
+        return NULL;
+#else
+    data = aligned_alloc(align, size);
+#endif
+
+    if (!data)
+        return NULL;
+
+    ret = av_buffer_create(data, size, av_buffer_default_free, NULL, 0);
+    if (!ret)
+        av_freep(&data);
+
+    return ret;
+}
+
 AVBufferRef *av_buffer_allocz(size_t size)
 {
     AVBufferRef *ret = av_buffer_alloc(size);

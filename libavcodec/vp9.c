@@ -165,7 +165,8 @@ static int update_size(AVCodecContext *avctx, int w, int h)
                      CONFIG_VP9_NVDEC_HWACCEL + \
                      CONFIG_VP9_VAAPI_HWACCEL + \
                      CONFIG_VP9_VDPAU_HWACCEL + \
-                     CONFIG_VP9_VIDEOTOOLBOX_HWACCEL)
+                     CONFIG_VP9_VIDEOTOOLBOX_HWACCEL + \
+                     CONFIG_VP9_TX1_HWACCEL)
     enum AVPixelFormat pix_fmts[HWACCEL_MAX + 2], *fmtp = pix_fmts;
     VP9Context *s = avctx->priv_data;
     uint8_t *p;
@@ -180,6 +181,10 @@ static int update_size(AVCodecContext *avctx, int w, int h)
 
         switch (s->pix_fmt) {
         case AV_PIX_FMT_YUV420P:
+#if CONFIG_VP9_TX1_HWACCEL
+            *fmtp++ = AV_PIX_FMT_TX1;
+#endif
+        /* fallthrough */
         case AV_PIX_FMT_YUV420P10:
 #if CONFIG_VP9_DXVA2_HWACCEL
             *fmtp++ = AV_PIX_FMT_DXVA2_VLD;
@@ -1619,6 +1624,23 @@ static int vp9_decode_frame(AVCodecContext *avctx, AVFrame *frame,
         ret = hwaccel->end_frame(avctx);
         if (ret < 0)
             return ret;
+
+        if (s->s.h.refreshctx && s->s.h.parallelmode) {
+            int j, k, l, m;
+
+            for (i = 0; i < 4; i++) {
+                for (j = 0; j < 2; j++)
+                    for (k = 0; k < 2; k++)
+                        for (l = 0; l < 6; l++)
+                            for (m = 0; m < 6; m++)
+                                memcpy(s->prob_ctx[s->s.h.framectxid].coef[i][j][k][l][m],
+                                    s->prob.coef[i][j][k][l][m], 3);
+                if (s->s.h.txfmmode == i)
+                    break;
+            }
+            s->prob_ctx[s->s.h.framectxid].p = s->prob.p;
+        }
+
         goto finish;
     }
 
@@ -1870,6 +1892,9 @@ const FFCodec ff_vp9_decoder = {
 #endif
 #if CONFIG_VP9_VIDEOTOOLBOX_HWACCEL
                                HWACCEL_VIDEOTOOLBOX(vp9),
+#endif
+#if CONFIG_VP9_TX1_HWACCEL
+                               HWACCEL_TX1(vp9),
 #endif
                                NULL
                            },

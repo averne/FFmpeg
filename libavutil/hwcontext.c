@@ -66,6 +66,9 @@ static const HWContextType * const hw_table[] = {
 #if CONFIG_VULKAN
     &ff_hwcontext_type_vulkan,
 #endif
+#if CONFIG_TX1
+    &ff_hwcontext_type_tx1,
+#endif
     NULL,
 };
 
@@ -82,6 +85,7 @@ static const char *const hw_type_names[] = {
     [AV_HWDEVICE_TYPE_VIDEOTOOLBOX] = "videotoolbox",
     [AV_HWDEVICE_TYPE_MEDIACODEC] = "mediacodec",
     [AV_HWDEVICE_TYPE_VULKAN] = "vulkan",
+    [AV_HWDEVICE_TYPE_TX1]    = "tx1",
 };
 
 typedef struct FFHWDeviceContext {
@@ -412,7 +416,7 @@ static int transfer_data_alloc(AVFrame *dst, const AVFrame *src, int flags)
     frame_tmp->width  = ctx->width;
     frame_tmp->height = ctx->height;
 
-    ret = av_frame_get_buffer(frame_tmp, 0);
+    ret = av_frame_get_buffer(frame_tmp, 0x100);
     if (ret < 0)
         goto fail;
 

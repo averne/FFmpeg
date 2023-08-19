@@ -283,6 +283,8 @@ typedef struct SliceHeader {
 
     int slice_ctb_addr_rs;
     unsigned data_offset;
+
+    int nvidia_skip_length;
 } SliceHeader;
 
 typedef struct CodingUnit {

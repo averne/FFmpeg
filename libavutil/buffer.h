@@ -101,6 +101,8 @@ typedef struct AVBufferRef {
  */
 AVBufferRef *av_buffer_alloc(size_t size);
 
+AVBufferRef *av_buffer_aligned_alloc(size_t size, size_t align);
+
 /**
  * Same as av_buffer_alloc(), except the returned buffer will be initialized
  * to zero.
