@@ -138,13 +138,16 @@ int ff_tx1_decode_uninit(AVCodecContext *avctx, TX1DecodeContext *ctx) {
 }
 
 static void tx1_fdd_priv_free(void *priv) {
-    TX1Frame *tf = priv;
+    TX1Frame          *tf = priv;
+    TX1DecodeContext *ctx = tf->ctx;
 
     if (!tf)
         return;
 
-    av_buffer_unref(&tf->input_map_ref);
+    if (tf->in_flight)
+        ff_tx1_syncpt_wait(ctx->channel, tf->fence, -1);
 
+    av_buffer_unref(&tf->input_map_ref);
     av_freep(&tf);
 }
 
@@ -166,6 +169,8 @@ static int tx1_wait_decode(void *logctx, AVFrame *frame) {
     err = ff_tx1_syncpt_wait(ctx->channel, tf->fence, -1);
     if (err < 0)
         return err;
+
+    tf->in_flight = false;
 
     if (!ctx->is_nvjpg) {
         nvdec_status = (nvdec_status_s *)(mem + ctx->status_off);
@@ -225,6 +230,7 @@ int ff_tx1_start_frame(AVCodecContext *avctx, AVFrame *frame, TX1DecodeContext *
     }
 
     tf = fdd->hwaccel_priv;
+    tf->in_flight = false;
 
     err = ff_tx1_cmdbuf_add_memory(&ctx->cmdbuf, (AVTX1Map *)tf->input_map_ref->data,
                                    ctx->cmdbuf_off, ctx->max_cmdbuf_size);
@@ -364,6 +370,7 @@ int ff_tx1_end_frame(AVCodecContext *avctx, AVFrame *frame, TX1DecodeContext *ct
         return err;
 
     tf->bitstream_len = ctx->bitstream_len;
+    tf->in_flight     = true;
 
     ctx->frame_idx++;
 

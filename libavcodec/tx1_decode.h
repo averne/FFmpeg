@@ -58,6 +58,7 @@ typedef struct TX1Frame {
     AVBufferRef *input_map_ref;
     uint32_t fence;
     uint32_t bitstream_len;
+    bool in_flight;
 } TX1Frame;
 
 static inline size_t ff_tx1_decode_pick_bitstream_buffer_size(AVCodecContext *avctx) {
