@@ -587,8 +587,22 @@ static int tx1_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
 {
     TX1HEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame            *frame = ctx->current_frame;
+    FrameDecodeData      *fdd = (FrameDecodeData *)frame->private_ref->data;
+    TX1Frame              *tf = fdd->hwaccel_priv;
+    AVTX1Map       *input_map = (AVTX1Map *)tf->input_map_ref->data;
 
-    return ff_tx1_decode_slice(avctx, frame, buf, buf_size, true);
+    uint8_t *mem;
+
+    mem = ff_tx1_map_get_addr(input_map);
+
+    /*
+     * Official code adds a 4-byte 00000001 startcode,
+     * though decoding was observed to work without it
+     */
+    AV_WB8(mem + ctx->core.bitstream_off + ctx->core.bitstream_len, 0);
+    ctx->core.bitstream_len += 1;
+
+    return ff_tx1_decode_slice(avctx, frame, buf, buf_size, AV_RB24(buf) != 1);
 }
 
 static int tx1_hevc_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {

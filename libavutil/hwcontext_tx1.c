@@ -267,7 +267,7 @@ static int tx1_device_init(AVHWDeviceContext *ctx) {
 #endif
 
     hwctx->vic_setup_off       = 0;
-    hwctx->vic_cmdbuf_off      = FFALIGN(hwctx->vic_setup_off + sizeof(VicConfigStruct),
+    hwctx->vic_cmdbuf_off      = FFALIGN(hwctx->vic_setup_off  + sizeof(VicConfigStruct),
                                          FF_TX1_MAP_ALIGN);
     hwctx->vic_filter_off      = FFALIGN(hwctx->vic_cmdbuf_off + FF_TX1_MAP_ALIGN,
                                          FF_TX1_MAP_ALIGN);

@@ -22,6 +22,7 @@
 #define AVUTIL_TX1_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "nvhost_ioctl.h"
 #include "nvmap_ioctl.h"
