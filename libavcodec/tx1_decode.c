@@ -123,7 +123,7 @@ fail:
 }
 
 int ff_tx1_decode_uninit(AVCodecContext *avctx, TX1DecodeContext *ctx) {
-    AVHWFramesContext *frames_ctx    = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
+    AVHWFramesContext    *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     AVHWDeviceContext *hw_device_ctx = (AVHWDeviceContext *)frames_ctx->device_ref->data;
 
     av_buffer_pool_uninit(&ctx->decoder_pool);
@@ -325,9 +325,9 @@ int ff_tx1_decode_slice(AVCodecContext *avctx, AVFrame *frame, const uint8_t *bu
 int ff_tx1_end_frame(AVCodecContext *avctx, AVFrame *frame, TX1DecodeContext *ctx,
                      const uint8_t *end_sequence, int end_sequence_size)
 {
-    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
-    TX1Frame                     *tf = fdd->hwaccel_priv;
-    AVTX1Map              *input_map = (AVTX1Map *)tf->input_map_ref->data;
+    FrameDecodeData *fdd = (FrameDecodeData *)frame->private_ref->data;
+    TX1Frame         *tf = fdd->hwaccel_priv;
+    AVTX1Map  *input_map = (AVTX1Map *)tf->input_map_ref->data;
 
     uint8_t *mem;
     int err;

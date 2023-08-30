@@ -259,7 +259,7 @@ fail:
 #else
     void *mem;
 
-    size  = FFALIGN(size, 0x1000);
+    size = FFALIGN(size, 0x1000);
 
     mem = aligned_alloc(FFALIGN(align, 0x1000), size);
     if (!mem)

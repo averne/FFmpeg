@@ -88,19 +88,19 @@ static int tx1_hevc_decode_init(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 HEVC decoder\n");
 
-    ctx->core.pic_setup_off      = 0;
-    ctx->core.status_off         = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp8_pic_s),
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.cmdbuf_off         = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
-                                           FF_TX1_MAP_ALIGN);
-    ctx->tile_sizes_off          = FFALIGN(ctx->core.cmdbuf_off    + 3*FF_TX1_MAP_ALIGN,
-                                           FF_TX1_MAP_ALIGN);
-    ctx->scaling_list_off        = FFALIGN(ctx->tile_sizes_off     + 0x900,
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.bitstream_off      = FFALIGN(ctx->scaling_list_off   + 0x400,
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.input_map_size     = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
-                                           0x1000);
+    ctx->core.pic_setup_off  = 0;
+    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp8_pic_s),
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
+                                       FF_TX1_MAP_ALIGN);
+    ctx->tile_sizes_off      = FFALIGN(ctx->core.cmdbuf_off    + 3*FF_TX1_MAP_ALIGN,
+                                       FF_TX1_MAP_ALIGN);
+    ctx->scaling_list_off    = FFALIGN(ctx->tile_sizes_off     + 0x900,
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.bitstream_off  = FFALIGN(ctx->scaling_list_off   + 0x400,
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
+                                       0x1000);
 
     ctx->core.max_cmdbuf_size    =  ctx->tile_sizes_off      - ctx->core.cmdbuf_off;
     ctx->core.max_bitstream_size =  ctx->core.input_map_size - ctx->core.bitstream_off;
@@ -605,22 +605,6 @@ static int tx1_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     return ff_tx1_decode_slice(avctx, frame, buf, buf_size, AV_RB24(buf) != 1);
 }
 
-static int tx1_hevc_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
-    AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
-
-    int err;
-
-    err = ff_tx1_frame_params(avctx, hw_frames_ctx);
-    if (err < 0)
-        return err;
-
-    /* Align to CTU boundaries */
-    frames_ctx->width  = FFALIGN(avctx->width,  CTU_SIZE);
-    frames_ctx->height = FFALIGN(avctx->height, CTU_SIZE);
-
-    return 0;
-}
-
 #if CONFIG_HEVC_TX1_HWACCEL
 const FFHWAccel ff_hevc_tx1_hwaccel = {
     .p.name               = "hevc_tx1",
@@ -632,7 +616,7 @@ const FFHWAccel ff_hevc_tx1_hwaccel = {
     .decode_slice         = &tx1_hevc_decode_slice,
     .init                 = &tx1_hevc_decode_init,
     .uninit               = &tx1_hevc_decode_uninit,
-    .frame_params         = &tx1_hevc_frame_params,
+    .frame_params         = &ff_tx1_frame_params,
     .priv_data_size       = sizeof(TX1HEVCDecodeContext),
     .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
 };

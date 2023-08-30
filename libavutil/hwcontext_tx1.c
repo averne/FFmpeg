@@ -168,25 +168,28 @@ int ff_tx1_map_vic_pic_fmt(enum AVPixelFormat fmt) {
     }
 }
 
-static uint32_t tx1_surface_get_width_align(enum AVPixelFormat fmt) {
+static uint32_t tx1_surface_get_width_align(enum AVPixelFormat fmt, const AVComponentDescriptor *comp) {
+    int step = comp->step;
+
     if (fmt != AV_PIX_FMT_TX1)
-        return 256; /* Pitch linear surfaces must be aligned to 256b for VIC */
+        return 256 / step; /* Pitch linear surfaces must be aligned to 256B for VIC */
 
     /*
-     * GOBs are 64b wide.
+     * GOBs are 64B wide.
      * In addition, we use a 32Bx8 cache width in VIC for block linear surfaces.
      */
-    return 64;
+    return 64 / step;
 }
 
-static uint32_t tx1_surface_get_height_align(enum AVPixelFormat fmt) {
+static uint32_t tx1_surface_get_height_align(enum AVPixelFormat fmt, const AVComponentDescriptor *comp) {
+    /* Height alignment is in terms of lines, not bytes, therefore we don't divide by the sample step */
     if (fmt != AV_PIX_FMT_TX1)
         return 4; /* We use 64Bx4 cache width in VIC for pitch linear surfaces */
 
     /*
-     * GOBs are 8b high, and we use a GOB height of 2.
+     * GOBs are 8B high, and we use a GOB height of 2.
      * In addition, we use a 32Bx8 cache width in VIC for block linear surfaces.
-     * Note: should work with just 16 but that leads to decoding failures.
+     * We double this requirement to make sure it is respected for the subsampled chroma plane.
      */
     return 32;
 }
@@ -266,13 +269,13 @@ static int tx1_device_init(AVHWDeviceContext *ctx) {
     hwctx->vic_map.owner = hwctx->vic_channel.channel.fd;
 #endif
 
-    hwctx->vic_setup_off       = 0;
-    hwctx->vic_cmdbuf_off      = FFALIGN(hwctx->vic_setup_off  + sizeof(VicConfigStruct),
-                                         FF_TX1_MAP_ALIGN);
-    hwctx->vic_filter_off      = FFALIGN(hwctx->vic_cmdbuf_off + FF_TX1_MAP_ALIGN,
-                                         FF_TX1_MAP_ALIGN);
-    vic_map_size               = FFALIGN(hwctx->vic_filter_off + 0x3000,
-                                         0x1000);
+    hwctx->vic_setup_off  = 0;
+    hwctx->vic_cmdbuf_off = FFALIGN(hwctx->vic_setup_off  + sizeof(VicConfigStruct),
+                                    FF_TX1_MAP_ALIGN);
+    hwctx->vic_filter_off = FFALIGN(hwctx->vic_cmdbuf_off + FF_TX1_MAP_ALIGN,
+                                    FF_TX1_MAP_ALIGN);
+    vic_map_size          = FFALIGN(hwctx->vic_filter_off + 0x3000,
+                                    0x1000);
 
     hwctx->vic_max_cmdbuf_size = hwctx->vic_filter_off - hwctx->vic_cmdbuf_off;
 
@@ -430,16 +433,18 @@ fail:
 }
 
 static int tx1_frames_init(AVHWFramesContext *ctx) {
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(ctx->sw_format);
+
     uint32_t width_aligned, height_aligned, size;
 
     av_log(ctx, AV_LOG_DEBUG, "Initializing frame pool for the TX1 device\n");
 
     if (!ctx->pool) {
-        width_aligned  = FFALIGN(ctx->width,  tx1_surface_get_width_align (ctx->format));
-        height_aligned = FFALIGN(ctx->height, tx1_surface_get_height_align(ctx->format));
+        width_aligned  = FFALIGN(ctx->width,  tx1_surface_get_width_align (ctx->format, &desc->comp[0]));
+        height_aligned = FFALIGN(ctx->height, tx1_surface_get_height_align(ctx->format, &desc->comp[0]));
 
         size = av_image_get_buffer_size(ctx->sw_format, width_aligned, height_aligned,
-                                        tx1_surface_get_width_align(ctx->format));
+                                        tx1_surface_get_width_align(ctx->format, &desc->comp[0]));
 
         ctx->internal->pool_internal = av_buffer_pool_init2(size, ctx, tx1_pool_alloc, NULL);
         if (!ctx->internal->pool_internal)
@@ -454,6 +459,8 @@ static void tx1_frames_uninit(AVHWFramesContext *ctx) {
 }
 
 static int tx1_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(ctx->sw_format);
+
     AVTX1Map *map;
     uint32_t width_aligned, height_aligned;
     int err;
@@ -466,12 +473,12 @@ static int tx1_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
 
     map = ff_tx1_frame_get_fbuf_map(frame);
 
-    width_aligned  = FFALIGN(ctx->width,  tx1_surface_get_width_align (ctx->format));
-    height_aligned = FFALIGN(ctx->height, tx1_surface_get_height_align(ctx->format));
+    width_aligned  = FFALIGN(ctx->width,  tx1_surface_get_width_align (ctx->format, &desc->comp[0]));
+    height_aligned = FFALIGN(ctx->height, tx1_surface_get_height_align(ctx->format, &desc->comp[0]));
 
     err = av_image_fill_arrays(frame->data, frame->linesize, ff_tx1_map_get_addr(map),
                                ctx->sw_format, width_aligned, height_aligned,
-                               tx1_surface_get_width_align(ctx->format));
+                               tx1_surface_get_width_align(ctx->format, &desc->comp[0]));
     if (err < 0)
         return err;
 

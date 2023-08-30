@@ -58,15 +58,15 @@ static int tx1_mjpeg_decode_init(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 MJPEG decoder\n");
 
-    ctx->core.pic_setup_off     = 0;
-    ctx->core.status_off        = FFALIGN(ctx->core.pic_setup_off + sizeof(nvjpg_dec_drv_pic_setup_s),
-                                          FF_TX1_MAP_ALIGN);
-    ctx->core.cmdbuf_off        = FFALIGN(ctx->core.status_off    + sizeof(nvjpg_dec_status),
-                                          FF_TX1_MAP_ALIGN);
-    ctx->core.bitstream_off     = FFALIGN(ctx->core.cmdbuf_off    + FF_TX1_MAP_ALIGN,
-                                          FF_TX1_MAP_ALIGN);
-    ctx->core.input_map_size    = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
-                                          0x1000);
+    ctx->core.pic_setup_off  = 0;
+    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvjpg_dec_drv_pic_setup_s),
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvjpg_dec_status),
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + FF_TX1_MAP_ALIGN,
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
+                                       0x1000);
 
     ctx->core.max_cmdbuf_size    =  ctx->core.slice_offsets_off - ctx->core.cmdbuf_off;
     ctx->core.max_bitstream_size =  ctx->core.input_map_size    - ctx->core.bitstream_off;

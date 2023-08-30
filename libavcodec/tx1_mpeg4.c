@@ -82,15 +82,15 @@ static int tx1_mpeg4_decode_init(AVCodecContext *avctx) {
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 MPEG4 decoder\n");
 
     /* Ignored: histogram map, size 0x400 */
-    ctx->core.pic_setup_off      = 0;
-    ctx->core.status_off         = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_mpeg4_pic_s),
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.cmdbuf_off         = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.bitstream_off      = FFALIGN(ctx->core.cmdbuf_off    + FF_TX1_MAP_ALIGN,
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.input_map_size     = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
-                                           0x1000);
+    ctx->core.pic_setup_off  = 0;
+    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_mpeg4_pic_s),
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + FF_TX1_MAP_ALIGN,
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
+                                       0x1000);
 
     ctx->core.max_cmdbuf_size    =  ctx->core.bitstream_off  - ctx->core.cmdbuf_off;
     ctx->core.max_bitstream_size =  ctx->core.input_map_size - ctx->core.bitstream_off;
@@ -105,10 +105,10 @@ static int tx1_mpeg4_decode_init(AVCodecContext *avctx) {
     history_size        = FFALIGN(width_in_mbs * 0x100 + 0x1100, 0x100);
     scratch_size        = 0x400;
 
-    ctx->coloc_off = 0;
+    ctx->coloc_off   = 0;
     ctx->history_off = FFALIGN(ctx->coloc_off   + coloc_size,   FF_TX1_MAP_ALIGN);
     ctx->scratch_off = FFALIGN(ctx->history_off + history_size, FF_TX1_MAP_ALIGN);
-    common_map_size = FFALIGN(ctx->scratch_off  + scratch_size, 0x1000);
+    common_map_size  = FFALIGN(ctx->scratch_off + scratch_size, 0x1000);
 
 #ifdef __SWITCH__
     hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;

@@ -104,15 +104,15 @@ static int tx1_vp8_decode_init(AVCodecContext *avctx) {
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 VP8 decoder\n");
 
     /* Ignored: histogram map, size 0x400 */
-    ctx->core.pic_setup_off      = 0;
-    ctx->core.status_off         = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp8_pic_s),
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.cmdbuf_off         = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.bitstream_off      = FFALIGN(ctx->core.cmdbuf_off    + FF_TX1_MAP_ALIGN,
-                                           FF_TX1_MAP_ALIGN);
-    ctx->core.input_map_size     = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
-                                           0x1000);
+    ctx->core.pic_setup_off  = 0;
+    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp8_pic_s),
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + FF_TX1_MAP_ALIGN,
+                                       FF_TX1_MAP_ALIGN);
+    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
+                                       0x1000);
 
     ctx->core.max_cmdbuf_size    =  ctx->core.bitstream_off  - ctx->core.cmdbuf_off;
     ctx->core.max_bitstream_size =  ctx->core.input_map_size - ctx->core.bitstream_off;
