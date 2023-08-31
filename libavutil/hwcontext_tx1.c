@@ -132,15 +132,10 @@ static float mat_colorgamut_bt2020_to_bt709[3][4] = {
 };
 
 static const enum AVPixelFormat supported_sw_formats[] = {
-    AV_PIX_FMT_NV12,
-    AV_PIX_FMT_YUV420P,
     AV_PIX_FMT_GRAY8,
-    AV_PIX_FMT_BGR32,
-    AV_PIX_FMT_BGR32_1,
-    AV_PIX_FMT_RGB32,
-    AV_PIX_FMT_RGB32_1,
-    AV_PIX_FMT_0RGB32,
-    AV_PIX_FMT_0BGR32,
+    AV_PIX_FMT_NV12,
+    AV_PIX_FMT_P010,
+    AV_PIX_FMT_YUV420P,
 };
 
 int ff_tx1_map_vic_pic_fmt(enum AVPixelFormat fmt) {
@@ -148,9 +143,11 @@ int ff_tx1_map_vic_pic_fmt(enum AVPixelFormat fmt) {
         case AV_PIX_FMT_GRAY8:
             return NVB0B6_T_L8;
         case AV_PIX_FMT_NV12:
-            return NVB0B6_T_Y8___V8U8_N420;
+            return NVB0B6_T_Y8___U8V8_N420;
         case AV_PIX_FMT_YUV420P:
             return NVB0B6_T_Y8___U8___V8_N420;
+        case AV_PIX_FMT_RGB565:
+            return NVB0B6_T_R5G6B5;
         case AV_PIX_FMT_RGB32:
             return NVB0B6_T_A8R8G8B8;
         case AV_PIX_FMT_BGR32:
@@ -621,14 +618,12 @@ static int tx1_transfer_get_formats(AVHWFramesContext *ctx,
 
     av_log(ctx, AV_LOG_DEBUG, "Getting transfer formats for TX1 device\n");
 
-    fmts = av_malloc_array(FF_ARRAY_ELEMS(supported_sw_formats) + 1,
-                                          sizeof(**formats));
+    fmts = av_malloc_array(2, sizeof(**formats));
     if (!fmts)
         return AVERROR(ENOMEM);
 
-    for (int i = 0; i < FF_ARRAY_ELEMS(supported_sw_formats); ++i)
-        fmts[i] = supported_sw_formats[i];
-    fmts[FF_ARRAY_ELEMS(supported_sw_formats)] = AV_PIX_FMT_NONE;
+    fmts[0] = ctx->sw_format;
+    fmts[1] = AV_PIX_FMT_NONE;
 
     *formats = fmts;
     return 0;
@@ -658,12 +653,16 @@ static void set_matrix_struct(VicMatrixStruct *dst, float src[3][4],
     dst->matrix_coeff23 = (int)(src[2][3] * 0x3ff00 + 0.5f);
 }
 
-static void tx1_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, const AVFrame *src) {
-    AVHWFramesContext *ctx = (AVHWFramesContext *)src->hw_frames_ctx->data;
-
-    const AVPixFmtDescriptor *dst_desc = av_pix_fmt_desc_get(dst->format);
-    const AVPixFmtDescriptor *src_desc = av_pix_fmt_desc_get(ctx->sw_format);
+static void tx1_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, const AVFrame *src,
+                                    enum AVPixelFormat fmt, bool is_10b_chroma)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
     AVTX1Map *input_map = ff_tx1_frame_get_fbuf_map(src);
+
+    /* Subsampled dimensions when emulating 10B chroma transfers, as input is always NV12 */
+    int divider = (!is_10b_chroma ? 1 : 2);
+    int src_width = src->width / divider, src_height = src->height / divider;
+    int dst_width = dst->width / divider, dst_height = dst->height / divider;
 
     *config = (VicConfigStruct){
         .pipeConfig = {
@@ -671,27 +670,28 @@ static void tx1_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, const
             .DownsampleVert             = 1 << 2, /* U9.2 */
         },
         .outputConfig = {
-            .AlphaFillMode              = NVB0B6_DXVAHD_ALPHA_FILL_MODE_OPAQUE,
+            .AlphaFillMode              = !is_10b_chroma ? NVB0B6_DXVAHD_ALPHA_FILL_MODE_OPAQUE :
+                                                           NVB0B6_DXVAHD_ALPHA_FILL_MODE_SOURCE_STREAM,
             .BackgroundAlpha            = 0,
             .BackgroundR                = 0,
             .BackgroundG                = 0,
             .BackgroundB                = 0,
             .TargetRectLeft             = 0,
-            .TargetRectRight            = dst->width  - 1,
+            .TargetRectRight            = dst_width  - 1,
             .TargetRectTop              = 0,
-            .TargetRectBottom           = dst->height - 1,
+            .TargetRectBottom           = dst_height - 1,
         },
         .outputSurfaceConfig = {
-            .OutPixelFormat             = ff_tx1_map_vic_pic_fmt(dst->format),
-            .OutSurfaceWidth            = dst->width  - 1,
-            .OutSurfaceHeight           = dst->height - 1,
+            .OutPixelFormat             = ff_tx1_map_vic_pic_fmt(fmt),
+            .OutSurfaceWidth            = dst_width  - 1,
+            .OutSurfaceHeight           = dst_height - 1,
             .OutBlkKind                 = NVB0B6_BLK_KIND_PITCH,
-            .OutLumaWidth               = (dst->linesize[0] / dst_desc->comp[0].step) - 1,
-            .OutLumaHeight              = dst->height - 1,
-            .OutChromaWidth             = (dst_desc->flags & AV_PIX_FMT_FLAG_RGB) ?
-                                          -1 : (dst->linesize[1] / dst_desc->comp[1].step) - 1,
-            .OutChromaHeight            = (dst_desc->flags & AV_PIX_FMT_FLAG_RGB) ?
-                                          -1 : (dst->height >> dst_desc->log2_chroma_h) - 1,
+            .OutLumaWidth               = (dst->linesize[0] / desc->comp[0].step) - 1,
+            .OutLumaHeight              = dst_height - 1,
+            .OutChromaWidth             = (desc->flags & AV_PIX_FMT_FLAG_RGB) ?
+                                          -1 : (dst->linesize[1] / desc->comp[1].step) - 1,
+            .OutChromaHeight            = (desc->flags & AV_PIX_FMT_FLAG_RGB) ?
+                                          -1 : (dst->height >> desc->log2_chroma_h) - 1,
         },
         .slotStruct = {
             {
@@ -703,20 +703,22 @@ static void tx1_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, const
                     .PlanarAlpha        = 1023,
                     .ConstantAlpha      = 1,
                     .SourceRectLeft     = 0,
-                    .SourceRectRight    = (src->width  - 1) << 16, /* U14.16 (for subpixel positioning) */
+                    .SourceRectRight    = (src_width  - 1) << 16, /* U14.16 (for subpixel positioning) */
                     .SourceRectTop      = 0,
-                    .SourceRectBottom   = (src->height - 1) << 16,
+                    .SourceRectBottom   = (src_height - 1) << 16,
                     .DestRectLeft       = 0,
-                    .DestRectRight      = src->width  - 1,
+                    .DestRectRight      = src_width  - 1,
                     .DestRectTop        = 0,
-                    .DestRectBottom     = src->height - 1,
+                    .DestRectBottom     = src_height - 1,
                 },
                 .slotSurfaceConfig = {
-                    .SlotPixelFormat    = ff_tx1_map_vic_pic_fmt(ctx->sw_format),
-                    .SlotChromaLocHoriz = (src->chroma_location == AVCHROMA_LOC_TOPLEFT ||
+                    .SlotPixelFormat    = ff_tx1_map_vic_pic_fmt(fmt),
+                    .SlotChromaLocHoriz = ((desc->flags & AV_PIX_FMT_FLAG_RGB)          ||
+                                           src->chroma_location == AVCHROMA_LOC_TOPLEFT ||
                                            src->chroma_location == AVCHROMA_LOC_LEFT    ||
                                            src->chroma_location == AVCHROMA_LOC_BOTTOMLEFT) ? 0 : 1,
-                    .SlotChromaLocVert  = (src->chroma_location == AVCHROMA_LOC_TOPLEFT ||
+                    .SlotChromaLocVert  = ((desc->flags & AV_PIX_FMT_FLAG_RGB)          ||
+                                           src->chroma_location == AVCHROMA_LOC_TOPLEFT ||
                                            src->chroma_location == AVCHROMA_LOC_TOP) ? 0 :
                                           (src->chroma_location == AVCHROMA_LOC_LEFT ||
                                            src->chroma_location == AVCHROMA_LOC_CENTER) ? 1 : 2,
@@ -724,18 +726,21 @@ static void tx1_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, const
                                           NVB0B6_BLK_KIND_GENERIC_16Bx2 : NVB0B6_BLK_KIND_PITCH,
                     .SlotBlkHeight      = !input_map->is_linear ? 1 : 0, /* GOB height 2 */
                     .SlotCacheWidth     = !input_map->is_linear ? 1 : 2, /* 32Bx8 for block, 64Bx4 for pitch (as recommended by the TRM) */
-                    .SlotSurfaceWidth   = src->width  - 1,
-                    .SlotSurfaceHeight  = src->height - 1,
-                    .SlotLumaWidth      = (src->linesize[0] / src_desc->comp[0].step) - 1,
-                    .SlotLumaHeight     = src->height - 1,
-                    .SlotChromaWidth    = (src->linesize[1] / src_desc->comp[1].step) - 1,
-                    .SlotChromaHeight   = (src->height >> src_desc->log2_chroma_h) - 1,
+                    .SlotSurfaceWidth   = src_width  - 1,
+                    .SlotSurfaceHeight  = src_height - 1,
+                    .SlotLumaWidth      = (src->linesize[0] / desc->comp[0].step) - 1,
+                    .SlotLumaHeight     = src_height - 1,
+                    .SlotChromaWidth    = (desc->flags & AV_PIX_FMT_FLAG_RGB) ?
+                                          -1 : (src->linesize[1] / desc->comp[1].step) - 1,
+                    .SlotChromaHeight   = (desc->flags & AV_PIX_FMT_FLAG_RGB) ?
+                                          -1 : (src->height >> desc->log2_chroma_h) - 1,
                 },
             },
         },
     };
 
-    if ((dst_desc->flags & AV_PIX_FMT_FLAG_RGB) || (src->colorspace != dst->colorspace)) {
+    /* Disabled for now, applications will handle colorspace conversion themselves */
+    if (false && ((desc->flags & AV_PIX_FMT_FLAG_RGB) || (src->colorspace != dst->colorspace))) {
         float (*src_mat)[4] = NULL, (*dst_mat)[4] = NULL, (*src_gamut_mat)[4] = NULL;
 
         switch (src->colorspace) {
@@ -779,7 +784,7 @@ static void tx1_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, const
                 break;
         }
 
-        if (dst_desc->flags & AV_PIX_FMT_FLAG_RGB)
+        if (desc->flags & AV_PIX_FMT_FLAG_RGB)
             dst_mat = NULL;
 
         if (src_mat)
@@ -794,7 +799,8 @@ static void tx1_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, const
 }
 
 static int tx1_vic_prepare_cmdbuf(AVTX1DeviceContext *hwctx, AVTX1Map *map,
-                                  uint32_t *map_offsets, int num_comps, const AVFrame *src)
+                                  uint32_t *map_offsets, int num_comps,
+                                  const AVFrame *src, enum AVPixelFormat fmt)
 {
     AVTX1Cmdbuf *cmdbuf = &hwctx->vic_cmdbuf;
 
@@ -824,10 +830,25 @@ static int tx1_vic_prepare_cmdbuf(AVTX1DeviceContext *hwctx, AVTX1Map *map,
         FF_TX1_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET + i * sizeof(uint32_t),
                           map, map_offsets[i], NVHOST_RELOC_TYPE_PITCH_LINEAR);
 
-    FF_TX1_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
-                      src_map, 0, input_reloc_type);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_CHROMA_U_OFFSET(0),
-                      src_map, src->data[1] - src->data[0], input_reloc_type);
+    switch (fmt) {
+        case AV_PIX_FMT_RGB565:
+            /* 16-bit luma transfer */
+            FF_TX1_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
+                              src_map, 0, input_reloc_type);
+            break;
+        case AV_PIX_FMT_RGB32:
+            /* 16-bit chroma transfer */
+            FF_TX1_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
+                              src_map, src->data[1] - src->data[0], input_reloc_type);
+            break;
+        case AV_PIX_FMT_NV12:
+            /* Normal transfer */
+            FF_TX1_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
+                              src_map, 0, input_reloc_type);
+            FF_TX1_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_CHROMA_U_OFFSET(0),
+                              src_map, src->data[1] - src->data[0], input_reloc_type);
+            break;
+    }
 
     FF_TX1_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_EXECUTE,
                       FF_TX1_ENUM(NVB0B6_VIDEO_COMPOSITOR_EXECUTE, AWAKEN, ENABLE));
@@ -862,14 +883,50 @@ static int tx1_vic_prepare_cmdbuf(AVTX1DeviceContext *hwctx, AVTX1Map *map,
     return 0;
 }
 
-static int tx1_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src) {
+static int tx1_vic_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src,
+                                 enum AVPixelFormat fmt, AVTX1Map *map, uint32_t *plane_offsets,
+                                 int num_planes, bool is_chroma)
+{
     AVTX1DeviceContext *hwctx = ctx->device_ctx->hwctx;
     AVTX1Cmdbuf       *cmdbuf = &hwctx->vic_cmdbuf;
 
-    AVTX1Map map = {0};
-    uint32_t plane_offsets[4];
     uint32_t render_fence;
-    uint8_t *map_base, *mem;
+    uint8_t *mem;
+    int err;
+
+    mem = ff_tx1_map_get_addr(&hwctx->vic_map);
+
+    tx1_vic_preprare_config((VicConfigStruct *)(mem + hwctx->vic_setup_off),
+                            dst, src, fmt, is_chroma);
+
+    err = ff_tx1_cmdbuf_clear(cmdbuf);
+    if (err < 0)
+        return err;
+
+    err = tx1_vic_prepare_cmdbuf(hwctx, map, plane_offsets, num_planes, src, fmt);
+    if (err < 0)
+        goto fail;
+
+    err = ff_tx1_channel_submit(&hwctx->vic_channel, cmdbuf, &render_fence);
+    if (err < 0)
+        goto fail;
+
+    err = ff_tx1_syncpt_wait(&hwctx->vic_channel, render_fence, -1);
+    if (err < 0)
+        goto fail;
+
+fail:
+    return err;
+}
+
+static int tx1_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src) {
+#ifdef __SWITCH__
+    AVTX1DeviceContext *hwctx = ctx->device_ctx->hwctx;
+#endif
+
+    AVTX1Map map = {0};
+    uint8_t *map_base;
+    uint32_t plane_offsets[4];
     int num_planes, i;
     int err;
 
@@ -878,8 +935,6 @@ static int tx1_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst, const AV
 
     if (!src->hw_frames_ctx || dst->hw_frames_ctx)
         return AVERROR(ENOSYS);
-
-    num_planes = av_pix_fmt_count_planes(dst->format);
 
     /*
      * HOS specific optimization: the frame buffer is directly used as backbuffer for VIC
@@ -905,30 +960,35 @@ static int tx1_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst, const AV
     if (err < 0)
         goto fail;
 
+    num_planes = av_pix_fmt_count_planes(dst->format);
     for (i = 0; i < num_planes; ++i)
         plane_offsets[i] = (uintptr_t)(dst->data[i] - map_base);
 
-    mem = ff_tx1_map_get_addr(&hwctx->vic_map);
+    /* VIC expects planes in the reversed order */
+    if (dst->format == AV_PIX_FMT_YUV420P)
+        FFSWAP(uint32_t, plane_offsets[1], plane_offsets[2]);
 
-    tx1_vic_preprare_config((VicConfigStruct *)(mem + hwctx->vic_setup_off), dst, src);
+    /*
+     * VIC on the TX1 does not support 16-bit YUV surfaces.
+     * Here we emulate them using two separates transfers for the luma and chroma planes
+     * (16-bit and 32-bit widths respectively).
+     */
+    if (dst->format == AV_PIX_FMT_P010) {
+        err = tx1_vic_transfer_data(ctx, dst, src, AV_PIX_FMT_RGB565,
+                                    &map, &plane_offsets[0], 1, false);
+        if (err < 0)
+            goto fail;
 
-    err = ff_tx1_cmdbuf_clear(cmdbuf);
-    if (err < 0)
-        return err;
-
-    err = tx1_vic_prepare_cmdbuf(hwctx, &map, plane_offsets, num_planes, src);
-    if (err < 0)
-        goto fail;
-
-    err = ff_tx1_channel_submit(&hwctx->vic_channel, cmdbuf, &render_fence);
-    if (err < 0)
-        goto fail;
-
-    err = ff_tx1_syncpt_wait(&hwctx->vic_channel, render_fence, -1);
-    if (err < 0)
-        goto fail;
-
-    err = 0;
+        err = tx1_vic_transfer_data(ctx, dst, src, AV_PIX_FMT_RGB32,
+                                    &map, &plane_offsets[1], 1, true);
+        if (err < 0)
+            goto fail;
+    } else {
+        err = tx1_vic_transfer_data(ctx, dst, src, dst->format,
+                                    &map, plane_offsets, num_planes, false);
+        if (err < 0)
+            goto fail;
+    }
 
 #ifndef __SWITCH__
     memcpy(dst->buf[0]->data, ff_tx1_map_get_addr(&map), dst->buf[0]->size);
