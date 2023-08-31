@@ -287,6 +287,8 @@ static void tx1_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecContext *
 
     /* Note: the v1 substructure isn't filled out on T210 */
     *setup = (nvdec_vp9_pic_s){
+        .gptimer_timeout_value    = 0, /* Default value */
+
         .tileformat               = 0, /* TBL */
         .gob_height               = 0, /* GOB_2 */
 
@@ -408,8 +410,9 @@ static int tx1_vp9_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP9SharedContext *h,
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
                       FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, VP9));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                      FF_TX1_ENUM(NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE, VP9) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1));
+                      FF_TX1_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     VP9) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
                       FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 

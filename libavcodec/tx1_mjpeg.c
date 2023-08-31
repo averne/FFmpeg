@@ -187,7 +187,8 @@ static int tx1_mjpeg_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, MJpegDecodeContext *s, 
     FF_TX1_PUSH_VALUE(cmdbuf, NVE7D0_SET_APPLICATION_ID,
                       FF_TX1_ENUM(NVE7D0_SET_APPLICATION_ID, ID, NVJPG_DECODER));
     FF_TX1_PUSH_VALUE(cmdbuf, NVE7D0_SET_CONTROL_PARAMS,
-                      FF_TX1_VALUE(NVE7D0_SET_CONTROL_PARAMS, DUMP_CYCLE_COUNT, 1));
+                      FF_TX1_VALUE(NVE7D0_SET_CONTROL_PARAMS, DUMP_CYCLE_COUNT, 1) |
+                      FF_TX1_VALUE(NVE7D0_SET_CONTROL_PARAMS, GPTIMER_ON,       1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVE7D0_SET_PICTURE_INDEX,
                       FF_TX1_VALUE(NVE7D0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 

@@ -158,6 +158,10 @@ static void tx1_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecContext *
      * here we only set those used by official code
      */
     *setup = (nvdec_vc1_pic_s) {
+        .scratch_pic_buffer_size = ctx->scratch_size,
+
+        .gptimer_timeout_value   = 0, /* Default value */
+
         .bitstream_offset        = 0,
 
         .FrameStride             = {
@@ -231,8 +235,6 @@ static void tx1_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecContext *
         .dqsbedge                = (v->dqprofile == DQPROFILE_SINGLE_EDGE)  ? v->dqsbedge : 0,
         .dqdbedge                = (v->dqprofile == DQPROFILE_DOUBLE_EDGES) ? v->dqsbedge : 0,
         .dqbilevel               = v->dqbilevel,
-
-        .scratch_pic_buffer_size = ctx->scratch_size,
     };
 
     setup->displayPara.enableTFOutput = 1;
@@ -277,8 +279,9 @@ static int tx1_vc1_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VC1Context *v, TX1VC1Deco
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
                       FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, VC1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                      FF_TX1_ENUM(NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE, VC1) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1));
+                      FF_TX1_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     VC1) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
                       FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 

@@ -152,6 +152,8 @@ static void tx1_vp8_prepare_frame_setup(nvdec_vp8_pic_s *setup, VP8Context *h,
                                         TX1VP8DecodeContext *ctx)
 {
     *setup = (nvdec_vp8_pic_s){
+        .gptimer_timeout_value            = 0, /* Default value */
+
         .FrameWidth                       = FFALIGN(h->framep[VP8_FRAME_CURRENT]->tf.f->width,  MB_SIZE),
         .FrameHeight                      = FFALIGN(h->framep[VP8_FRAME_CURRENT]->tf.f->height, MB_SIZE),
 
@@ -207,8 +209,9 @@ static int tx1_vp8_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP8Context *h,
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
                       FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, VP8));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                      FF_TX1_ENUM(NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE, VP8) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1));
+                      FF_TX1_ENUM(NVC5B0_SET_CONTROL_PARAMS,  CODEC_TYPE,     VP8) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
                       FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 

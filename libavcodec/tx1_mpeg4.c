@@ -142,6 +142,8 @@ static void tx1_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecConte
     *setup = (nvdec_mpeg4_pic_s){
         .scratch_pic_buffer_size      = ctx->scratch_size,
 
+        .gptimer_timeout_value        = 0, /* Default value */
+
         .FrameWidth                   = FFALIGN(s->width,  MB_SIZE),
         .FrameHeight                  = FFALIGN(s->height, MB_SIZE),
 
@@ -210,8 +212,9 @@ static int tx1_mpeg4_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, MpegEncContext *s, TX1M
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
                       FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, MPEG4));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                      FF_TX1_ENUM(NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE, MPEG4) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1));
+                      FF_TX1_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     MPEG4) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
                       FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 

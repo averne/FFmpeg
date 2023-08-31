@@ -209,6 +209,8 @@ static void tx1_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h
     *setup = (nvdec_h264_pic_s){
         .mbhist_buffer_size                     = ctx->mbhist_size,
 
+        .gptimer_timeout_value                  = 0, /* Default value */
+
         .log2_max_pic_order_cnt_lsb_minus4      = FFMAX(sps->log2_max_poc_lsb - 4, 0),
         .delta_pic_order_always_zero_flag       = sps->delta_pic_order_always_zero_flag,
         .frame_mbs_only_flag                    = sps->frame_mbs_only_flag,
@@ -377,8 +379,9 @@ static int tx1_h264_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, H264Context *h,
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
                       FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, H264));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                      FF_TX1_ENUM(NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE, H264) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1));
+                      FF_TX1_ENUM (NVC5B0_SET_CONTROL_PARAMS,  CODEC_TYPE,    H264) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
                       FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 

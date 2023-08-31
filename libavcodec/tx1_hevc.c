@@ -238,6 +238,8 @@ static void tx1_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecContext
     }
 
     *setup = (nvdec_hevc_pic_s){
+        .gptimer_timeout_value                       = 0, /* Default value */
+
         .tileformat                                  = 0, /* TBL */
         .gob_height                                  = 0, /* GOB_2 */
 
@@ -467,8 +469,9 @@ static int tx1_hevc_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, HEVCContext *s,
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
                       FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, HEVC));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                      FF_TX1_ENUM(NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE, HEVC) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1));
+                      FF_TX1_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     HEVC) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
                       FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 

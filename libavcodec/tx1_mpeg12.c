@@ -104,6 +104,8 @@ static void tx1_mpeg12_prepare_frame_setup(nvdec_mpeg2_pic_s *setup, MpegEncCont
                                            TX1MPEG12DecodeContext *ctx)
 {
     *setup = (nvdec_mpeg2_pic_s){
+        .gptimer_timeout_value      = 0, /* Default value */
+
         .FrameWidth                 = FFALIGN(s->width,  MB_SIZE),
         .FrameHeight                = FFALIGN(s->height, MB_SIZE),
 
@@ -176,7 +178,8 @@ static int tx1_mpeg12_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, MpegEncContext *s, TX1
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
                       FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, MPEG12));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS, codec_id |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1));
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
+                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
                       FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 
