@@ -45,7 +45,7 @@ typedef struct AVTX1DeviceContext {
 
     int *dfs_bitrate_samples;
     int dfs_cur_sample, dfs_num_samples;
-    uint64_t dfs_sampling_start_ts;
+    int64_t dfs_sampling_start_ts;
 } AVTX1DeviceContext;
 
 static inline AVTX1Map *ff_tx1_frame_get_fbuf_map(const AVFrame *frame) {

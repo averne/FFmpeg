@@ -27,6 +27,7 @@
 #include "pixfmt.h"
 #include "imgutils.h"
 #include "internal.h"
+#include "time.h"
 
 #include "hwcontext.h"
 #include "hwcontext_internal.h"
@@ -507,8 +508,6 @@ static int tx1_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
  */
 
 int ff_tx1_dfs_init(AVHWDeviceContext *ctx, AVTX1Channel *channel, int width, int height, double framerate_hz) {
-    /* TODO: Port to l4t? */
-#ifdef __SWITCH__
     AVTX1DeviceContext *hwctx = ctx->hwctx;
 
     uint32_t max_freq, lowcorner;
@@ -516,7 +515,7 @@ int ff_tx1_dfs_init(AVHWDeviceContext *ctx, AVTX1Channel *channel, int width, in
 
     hwctx->dfs_num_samples        = 5;
     hwctx->dfs_decode_ema_damping = 0.2;
-    hwctx->dfs_sampling_start_ts  = armGetSystemTick();
+    hwctx->dfs_sampling_start_ts  = av_gettime_relative();
 
     /*
      * Initialize low-corner frequency (reproduces official code)
@@ -554,17 +553,16 @@ int ff_tx1_dfs_init(AVHWDeviceContext *ctx, AVTX1Channel *channel, int width, in
     err = tx1_channel_set_freq(channel, max_freq);
     if (err < 0)
         return err;
-#endif
 
     return 0;
 }
 
 int ff_tx1_dfs_update(AVHWDeviceContext *ctx, AVTX1Channel *channel, int bitstream_len, int decode_cycles) {
-#ifdef __SWITCH__
     AVTX1DeviceContext *hwctx = ctx->hwctx;
 
     double avg;
     uint32_t sum, clock;
+    int64_t time;
     int i, err;
 
     /*
@@ -590,7 +588,9 @@ int ff_tx1_dfs_update(AVHWDeviceContext *ctx, AVTX1Channel *channel, int bitstre
         /* Flat average of bitstream bits per time interval */
         for (sum = i = 0; i < hwctx->dfs_num_samples; ++i)
             sum += hwctx->dfs_bitrate_samples[i];
-        avg = sum * 1e9 / armTicksToNs(armGetSystemTick() - hwctx->dfs_sampling_start_ts);
+
+        time = av_gettime_relative();
+        avg = sum * 1e6 / (time - hwctx->dfs_sampling_start_ts);
 
         clock = hwctx->dfs_decode_cycles_ema * avg * 1.2;
         clock = FFMAX(clock, hwctx->dfs_lowcorner);
@@ -602,19 +602,16 @@ int ff_tx1_dfs_update(AVHWDeviceContext *ctx, AVTX1Channel *channel, int bitstre
         av_log(ctx, AV_LOG_DEBUG, "DFS: %.0f cycles/b (ema), %.0f b/s -> clock %u Hz (lowcorner %u Hz)\n",
                hwctx->dfs_decode_cycles_ema, avg, clock, hwctx->dfs_lowcorner);
 
-        hwctx->dfs_sampling_start_ts = armGetSystemTick();
+        hwctx->dfs_sampling_start_ts = time;
     }
-#endif
 
     return 0;
 }
 
 int ff_tx1_dfs_uninit(AVHWDeviceContext *ctx, AVTX1Channel *channel) {
-#ifdef __SWITCH__
     AVTX1DeviceContext *hwctx = ctx->hwctx;
 
     av_free(hwctx->dfs_bitrate_samples);
-#endif
 
     return 0;
 }
