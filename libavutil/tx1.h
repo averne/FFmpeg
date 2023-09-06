@@ -89,6 +89,7 @@ int ff_tx1_channel_close(AVTX1Channel *channel);
 int ff_tx1_channel_get_clock_rate(AVTX1Channel *channel, uint32_t moduleid, uint32_t *clock_rate);
 int ff_tx1_channel_set_clock_rate(AVTX1Channel *channel, uint32_t moduleid, uint32_t clock_rate);
 int ff_tx1_channel_submit(AVTX1Channel *channel, AVTX1Cmdbuf *cmdbuf, uint32_t *fence);
+int ff_tx1_channel_set_submit_timeout(AVTX1Channel *channel, uint32_t timeout_ms);
 
 int ff_tx1_syncpt_wait(AVTX1Channel *channel, uint32_t threshold, int32_t timeout);
 

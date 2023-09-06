@@ -193,6 +193,20 @@ int ff_tx1_channel_submit(AVTX1Channel *channel, AVTX1Cmdbuf *cmdbuf, uint32_t *
 #endif
 }
 
+int ff_tx1_channel_set_submit_timeout(AVTX1Channel *channel, uint32_t timeout_ms) {
+    struct nvhost_set_timeout_args args;
+
+    args = (struct nvhost_set_timeout_args){
+        .timeout = timeout_ms,
+    };
+
+#ifndef __SWITCH__
+    return (ioctl(channel->fd, NVHOST_IOCTL_CHANNEL_SET_TIMEOUT, &args) < 0) ? AVERROR(errno) : 0;
+#else
+    return AVERROR(nvIoctl(channel->channel.fd, _NV_IOW(0, 7, args), &args));
+#endif
+}
+
 int ff_tx1_syncpt_wait(AVTX1Channel *channel, uint32_t threshold, int32_t timeout) {
 #ifndef __SWITCH__
     struct nvhost_ctrl_syncpt_waitex_args args = {

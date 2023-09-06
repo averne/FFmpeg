@@ -262,6 +262,15 @@ static int tx1_device_init(AVHWDeviceContext *ctx) {
     if (err < 0)
         goto fail;
 
+    /* Note: Official code only sets this for the nvdec channel */
+    err = ff_tx1_channel_set_submit_timeout(&hwctx->nvdec_channel, 1000);
+    if (err < 0)
+        goto fail;
+
+    err = ff_tx1_channel_set_submit_timeout(&hwctx->nvjpg_channel, 1000);
+    if (err < 0)
+        goto fail;
+
 #ifdef __SWITCH__
     hwctx->vic_map.owner = hwctx->vic_channel.channel.fd;
 #endif
