@@ -104,8 +104,8 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    =  ctx->prob_tab_off        - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size =  ctx->core.input_map_size - ctx->core.bitstream_off;
+    ctx->core.max_cmdbuf_size    = ctx->prob_tab_off        - ctx->core.cmdbuf_off;
+    ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
 
     err = ff_tx1_decode_init(avctx, &ctx->core);
     if (err < 0)
@@ -120,12 +120,12 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     ctx_counter_size = FFALIGN(0x33d0, 0x100);
 
     ctx->segment_rw1_off = 0;
-    ctx->segment_rw2_off = FFALIGN(ctx->segment_rw1_off + segment_rw_size, FF_TX1_MAP_ALIGN);
-    ctx->tile_sizes_off  = FFALIGN(ctx->segment_rw2_off + segment_rw_size, FF_TX1_MAP_ALIGN);
-    ctx->filter_off      = FFALIGN(ctx->tile_sizes_off   + 0x700,          FF_TX1_MAP_ALIGN);
-    ctx->col_mvrw1_off   = FFALIGN(ctx->filter_off      + filter_size,     FF_TX1_MAP_ALIGN);
-    ctx->col_mvrw2_off   = FFALIGN(ctx->col_mvrw1_off   + col_mvrw_size,   FF_TX1_MAP_ALIGN);
-    ctx->ctx_counter_off = FFALIGN(ctx->col_mvrw2_off   + col_mvrw_size,   FF_TX1_MAP_ALIGN);
+    ctx->segment_rw2_off = FFALIGN(ctx->segment_rw1_off + segment_rw_size,  FF_TX1_MAP_ALIGN);
+    ctx->tile_sizes_off  = FFALIGN(ctx->segment_rw2_off + segment_rw_size,  FF_TX1_MAP_ALIGN);
+    ctx->filter_off      = FFALIGN(ctx->tile_sizes_off  + 0x700,            FF_TX1_MAP_ALIGN);
+    ctx->col_mvrw1_off   = FFALIGN(ctx->filter_off      + filter_size,      FF_TX1_MAP_ALIGN);
+    ctx->col_mvrw2_off   = FFALIGN(ctx->col_mvrw1_off   + col_mvrw_size,    FF_TX1_MAP_ALIGN);
+    ctx->ctx_counter_off = FFALIGN(ctx->col_mvrw2_off   + col_mvrw_size,    FF_TX1_MAP_ALIGN);
     common_map_size      = FFALIGN(ctx->ctx_counter_off + ctx_counter_size, 0x1000);
 
 #ifdef __SWITCH__

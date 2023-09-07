@@ -48,8 +48,8 @@ typedef struct TX1H264DecodeContext {
         int16_t pic_id;
     } refs[16+1];
 
-    uint8_t ordered_dpb_map[16],
-        pic_id_map[16], scratch_ref, cur_frame;
+    uint8_t ordered_dpb_map[16+1],
+        pic_id_map[16+1], scratch_ref, cur_frame;
 
     uint64_t refs_mask, ordered_dpb_mask, pic_id_mask;
 
@@ -131,8 +131,8 @@ static int tx1_h264_decode_init(AVCodecContext *avctx) {
     history_size = FFALIGN(width_in_mbs * 0x200 + 0x1100, 0x200);
 
     ctx->coloc_off   = 0;
-    ctx->mbhist_off  = FFALIGN(ctx->coloc_off   + coloc_size,  FF_TX1_MAP_ALIGN);
-    ctx->history_off = FFALIGN(ctx->mbhist_off  + mbhist_size, FF_TX1_MAP_ALIGN);
+    ctx->mbhist_off  = FFALIGN(ctx->coloc_off   + coloc_size,   FF_TX1_MAP_ALIGN);
+    ctx->history_off = FFALIGN(ctx->mbhist_off  + mbhist_size,  FF_TX1_MAP_ALIGN);
     common_map_size  = FFALIGN(ctx->history_off + history_size, 0x1000);
 
 #ifdef __SWITCH__
@@ -203,8 +203,8 @@ static void tx1_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h
     const SPS *sps = h->ps.sps;
 
     int dpb_size, i, j, diff;
-    H264Picture *refs [16] = {0};
-    uint8_t dpb_to_ref[16] = {0};
+    H264Picture *refs [16+1] = {0};
+    uint8_t dpb_to_ref[16+1] = {0};
 
     *setup = (nvdec_h264_pic_s){
         .mbhist_buffer_size                     = ctx->mbhist_size,

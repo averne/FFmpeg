@@ -114,8 +114,8 @@ static int tx1_vp8_decode_init(AVCodecContext *avctx) {
     ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    =  ctx->core.bitstream_off  - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size =  ctx->core.input_map_size - ctx->core.bitstream_off;
+    ctx->core.max_cmdbuf_size    = ctx->core.bitstream_off  - ctx->core.cmdbuf_off;
+    ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
 
     err = ff_tx1_decode_init(avctx, &ctx->core);
     if (err < 0)

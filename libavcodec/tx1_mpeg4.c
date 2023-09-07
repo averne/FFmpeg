@@ -92,18 +92,18 @@ static int tx1_mpeg4_decode_init(AVCodecContext *avctx) {
     ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    =  ctx->core.bitstream_off  - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size =  ctx->core.input_map_size - ctx->core.bitstream_off;
+    ctx->core.max_cmdbuf_size    = ctx->core.bitstream_off  - ctx->core.cmdbuf_off;
+    ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
 
     err = ff_tx1_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
-    width_in_mbs        = FFALIGN(avctx->width,  MB_SIZE) / MB_SIZE;
-    height_in_mbs       = FFALIGN(avctx->height, MB_SIZE) / MB_SIZE;
-    coloc_size          = FFALIGN(FFALIGN(height_in_mbs, 2) * (width_in_mbs * 64) - 63, 0x100);
-    history_size        = FFALIGN(width_in_mbs * 0x100 + 0x1100, 0x100);
-    scratch_size        = 0x400;
+    width_in_mbs  = FFALIGN(avctx->width,  MB_SIZE) / MB_SIZE;
+    height_in_mbs = FFALIGN(avctx->height, MB_SIZE) / MB_SIZE;
+    coloc_size    = FFALIGN(FFALIGN(height_in_mbs, 2) * (width_in_mbs * 64) - 63, 0x100);
+    history_size  = FFALIGN(width_in_mbs * 0x100 + 0x1100, 0x100);
+    scratch_size  = 0x400;
 
     ctx->coloc_off   = 0;
     ctx->history_off = FFALIGN(ctx->coloc_off   + coloc_size,   FF_TX1_MAP_ALIGN);

@@ -102,8 +102,8 @@ static int tx1_hevc_decode_init(AVCodecContext *avctx) {
     ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    =  ctx->tile_sizes_off      - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size =  ctx->core.input_map_size - ctx->core.bitstream_off;
+    ctx->core.max_cmdbuf_size    = ctx->tile_sizes_off      - ctx->core.cmdbuf_off;
+    ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
 
     err = ff_tx1_decode_init(avctx, &ctx->core);
     if (err < 0)
@@ -114,7 +114,7 @@ static int tx1_hevc_decode_init(AVCodecContext *avctx) {
     coloc_size         = (aligned_width * aligned_height) + (aligned_width * aligned_height / MB_SIZE);
     filter_buffer_size = (FILTER_SIZE + SAO_SIZE + BSD_SIZE) * aligned_height;
 
-    ctx->coloc_off = 0;
+    ctx->coloc_off  = 0;
     ctx->filter_off = FFALIGN(ctx->coloc_off  + coloc_size,         FF_TX1_MAP_ALIGN);
     common_map_size = FFALIGN(ctx->filter_off + filter_buffer_size, 0x1000);
 
