@@ -151,7 +151,7 @@ static void tx1_fdd_priv_free(void *priv) {
     av_freep(&tf);
 }
 
-static int tx1_wait_decode(void *logctx, AVFrame *frame) {
+int ff_tx1_wait_decode(void *logctx, AVFrame *frame) {
     FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame                     *tf = fdd->hwaccel_priv;
     TX1DecodeContext            *ctx = tf->ctx;
@@ -163,6 +163,9 @@ static int tx1_wait_decode(void *logctx, AVFrame *frame) {
     uint32_t decode_cycles;
     uint8_t *mem;
     int err;
+
+    if (!tf->in_flight)
+        return 0;
 
     mem = ff_tx1_map_get_addr(input_map);
 
@@ -208,7 +211,7 @@ int ff_tx1_start_frame(AVCodecContext *avctx, AVFrame *frame, TX1DecodeContext *
         * however by proceeding we might overwrite the input buffer
         * during the decoding, so wait for the previous operation to complete
         */
-       err = tx1_wait_decode(avctx, frame);
+       err = ff_tx1_wait_decode(avctx, frame);
         if (err < 0)
             return err;
     } else {
@@ -218,7 +221,7 @@ int ff_tx1_start_frame(AVCodecContext *avctx, AVFrame *frame, TX1DecodeContext *
 
         fdd->hwaccel_priv      = tf;
         fdd->hwaccel_priv_free = tx1_fdd_priv_free;
-        fdd->post_process      = tx1_wait_decode;
+        fdd->post_process      = ff_tx1_wait_decode;
 
         tf->ctx = ctx;
 

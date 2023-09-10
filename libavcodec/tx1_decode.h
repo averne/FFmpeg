@@ -86,6 +86,8 @@ int ff_tx1_decode_slice(AVCodecContext *avctx, AVFrame *frame, const uint8_t *bu
 int ff_tx1_end_frame(AVCodecContext *avctx, AVFrame *frame, TX1DecodeContext *ctx,
                         const uint8_t *end_sequence, int end_sequence_size);
 
+int ff_tx1_wait_decode(void *logctx, AVFrame *frame);
+
 int ff_tx1_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx);
 
 #endif /* AVCODEC_TX1_H */

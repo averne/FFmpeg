@@ -93,7 +93,7 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 VP9 decoder\n");
 
     ctx->core.pic_setup_off  = 0;
-    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp8_pic_s),
+    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp9_pic_s),
                                        FF_TX1_MAP_ALIGN);
     ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
                                        FF_TX1_MAP_ALIGN);
@@ -117,7 +117,7 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     segment_rw_size  = FFALIGN(max_sb_size * 32, 0x100);
     filter_size      = FFALIGN(avctx->height, 64) * 988;
     col_mvrw_size    = max_sb_size * 1024;
-    ctx_counter_size = FFALIGN(0x33d0, 0x100);
+    ctx_counter_size = FFALIGN(sizeof(nvdec_vp9EntropyCounts_t), 0x100);
 
     ctx->segment_rw1_off = 0;
     ctx->segment_rw2_off = FFALIGN(ctx->segment_rw1_off + segment_rw_size,  FF_TX1_MAP_ALIGN);
@@ -151,7 +151,7 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     memset(mem + ctx->col_mvrw1_off, 0, col_mvrw_size);
     memset(mem + ctx->col_mvrw2_off, 0, col_mvrw_size);
 
-    memset(mem + ctx->ctx_counter_off, 0, ctx_counter_size);
+    memset(mem + ctx->ctx_counter_off, 0, sizeof(nvdec_vp9EntropyCounts_t));
 
     return 0;
 
@@ -160,13 +160,11 @@ fail:
     return err;
 }
 
-static void tx1_vp9_init_probs(nvdec_vp9EntropyProbs_t *probs, VP9Context *s) {
-    VP9SharedContext *h = &s->s;
-
+static void tx1_vp9_init_probs(nvdec_vp9EntropyProbs_t *probs) {
     int i, j;
 
-    for (i = 0; i < 10; ++i) {
-        for (j = 0; j < 10; ++j) {
+    for (i = 0; i < FF_ARRAY_ELEMS(probs->kf_bmode_prob); ++i) {
+        for (j = 0; j < FF_ARRAY_ELEMS(probs->kf_bmode_prob[0]); ++j) {
             memcpy(probs->kf_bmode_prob[i][j], ff_vp9_default_kf_ymode_probs[pmconv[i]][pmconv[j]], 8);
             probs->kf_bmode_probB[i][j][0]   = ff_vp9_default_kf_ymode_probs[pmconv[i]][pmconv[j]][8];
         }
@@ -184,37 +182,37 @@ static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
 
     if (init) {
         memset(probs, 0, sizeof(nvdec_vp9EntropyProbs_t));
-        tx1_vp9_init_probs(probs, s);
+        tx1_vp9_init_probs(probs);
     }
 
-    for (i = 0; i < 3; ++i)
+    for (i = 0; i < FF_ARRAY_ELEMS(probs->ref_pred_probs); ++i)
         probs->ref_pred_probs[i] = *s->intra_pred_data[i];
 
-    memcpy(probs->mb_segment_tree_probs,  s->s.h.segmentation.prob,      7);
+    memcpy(probs->mb_segment_tree_probs,  s->s.h.segmentation.prob,      sizeof(probs->mb_segment_tree_probs));
     if (s->s.h.segmentation.temporal)
-        memcpy(probs->segment_pred_probs, s->s.h.segmentation.pred_prob, 3);
+        memcpy(probs->segment_pred_probs, s->s.h.segmentation.pred_prob, sizeof(probs->segment_pred_probs));
     else
         memset(probs->segment_pred_probs, 0xff, sizeof(probs->segment_pred_probs));
 
     /* Ignored by official software: ref_scores, prob_comppred */
 
-    for (i = 0; i < 7; ++i)
+    for (i = 0; i < FF_ARRAY_ELEMS(probs->a.inter_mode_prob); ++i)
         memcpy(probs->a.inter_mode_prob[i], p->mv_mode[i], 3);
 
-    memcpy(probs->a.intra_inter_prob, p->intra, 4);
+    memcpy(probs->a.intra_inter_prob, p->intra, sizeof(probs->a.intra_inter_prob));
 
-    for (i = 0; i < 10; ++i) {
+    for (i = 0; i < FF_ARRAY_ELEMS(probs->a.uv_mode_prob); ++i) {
         memcpy(probs->a.uv_mode_prob[i], p->uv_mode[pmconv[i]], 8);
         probs->a.uv_mode_probB[i][0]   = p->uv_mode[pmconv[i]][8];
     }
 
-    for (i = 0; i < 2; ++i) {
+    for (i = 0; i < FF_ARRAY_ELEMS(probs->a.tx8x8_prob); ++i) {
         memcpy(probs->a.tx8x8_prob  [i], &p->tx8p [i], 1);
         memcpy(probs->a.tx16x16_prob[i],  p->tx16p[i], 2);
         memcpy(probs->a.tx32x32_prob[i],  p->tx32p[i], 3);
     }
 
-    for (i = 0; i < 4; ++i) {
+    for (i = 0; i < FF_ARRAY_ELEMS(probs->a.sb_ymode_prob); ++i) {
         memcpy(probs->a.sb_ymode_prob[i], p->y_mode[i], 8);
         probs->a.sb_ymode_probB[i][0]   = p->y_mode[i][8];
     }
@@ -227,12 +225,12 @@ static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
         }
     }
 
-    memcpy(probs->a.switchable_interp_prob, p->filter, 4 * 2);
-    memcpy(probs->a.comp_inter_prob,        p->comp,   5);
-    memcpy(probs->a.mbskip_probs,           p->skip,   3);
+    memcpy(probs->a.switchable_interp_prob, p->filter, sizeof(probs->a.switchable_interp_prob));
+    memcpy(probs->a.comp_inter_prob,        p->comp,   sizeof(probs->a.comp_inter_prob));
+    memcpy(probs->a.mbskip_probs,           p->skip,   sizeof(probs->a.mbskip_probs));
 
     memcpy(probs->a.nmvc.joints, p->mv_joint, 3);
-    for (i = 0; i < 2; ++i) {
+    for (i = 0; i < FF_ARRAY_ELEMS(p->mv_comp); ++i) {
         probs->a.nmvc.sign     [i]       = p->mv_comp[i].sign;
         probs->a.nmvc.class0   [i][0]    = p->mv_comp[i].class0;
         probs->a.nmvc.class0_hp[i]       = p->mv_comp[i].class0_hp;
@@ -243,13 +241,13 @@ static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
         memcpy(probs->a.nmvc.bits     [i], p->mv_comp[i].bits,      10);
     }
 
-    memcpy(probs->a.single_ref_prob, p->single_ref, 5 * 2);
-    memcpy(probs->a.comp_ref_prob,   p->comp_ref,   5);
+    memcpy(probs->a.single_ref_prob, p->single_ref, sizeof(probs->a.single_ref_prob));
+    memcpy(probs->a.comp_ref_prob,   p->comp_ref,   sizeof(probs->a.comp_ref_prob));
 
-    for (i = 0; i < 2; ++i) {
-        for (j = 0; j < 2; ++j) {
-            for (k = 0; k < 6; ++k) {
-                for (l = 0; l < 6; ++l) {
+    for (i = 0; i < FF_ARRAY_ELEMS(probs->a.probCoeffs); ++i) {
+        for (j = 0; j < FF_ARRAY_ELEMS(probs->a.probCoeffs[0]); ++j) {
+            for (k = 0; k < FF_ARRAY_ELEMS(probs->a.probCoeffs[0][0]); ++k) {
+                for (l = 0; l < FF_ARRAY_ELEMS(probs->a.probCoeffs[0][0][0]); ++l) {
                     memcpy(probs->a.probCoeffs     [i][j][k][l], s->prob.coef[0][i][j][k][l], 3);
                     memcpy(probs->a.probCoeffs8x8  [i][j][k][l], s->prob.coef[1][i][j][k][l], 3);
                     memcpy(probs->a.probCoeffs16x16[i][j][k][l], s->prob.coef[2][i][j][k][l], 3);
@@ -274,13 +272,88 @@ static void tx1_vp9_set_tile_sizes(uint16_t *sizes, VP9Context *s) {
     }
 }
 
+static void tx1_vp9_update_counts(nvdec_vp9EntropyCounts_t *cts,
+                                  VP9TileData *td)
+{
+    int i, j, k, l;
+
+    for (i = 0; i < FF_ARRAY_ELEMS(td->counts.y_mode); ++i) {
+        for (j = 0; j < FF_ARRAY_ELEMS(td->counts.y_mode[0]); ++j) {
+            td->counts.y_mode[i][pmconv[j]] = cts->sb_ymode_counts[i][j];
+        }
+    }
+
+    for (i = 0; i < FF_ARRAY_ELEMS(td->counts.uv_mode); ++i) {
+        for (j = 0; j < FF_ARRAY_ELEMS(td->counts.uv_mode[0]); ++j) {
+            td->counts.uv_mode[pmconv[i]][pmconv[j]] = cts->uv_mode_counts[i][j];
+        }
+    }
+
+    memcpy(td->counts.filter,     cts->switchable_interp_counts, sizeof(td->counts.filter));
+    memcpy(td->counts.intra,      cts->intra_inter_count,        sizeof(td->counts.intra));
+    memcpy(td->counts.comp,       cts->comp_inter_count,         sizeof(td->counts.comp));
+    memcpy(td->counts.single_ref, cts->single_ref_count,         sizeof(td->counts.single_ref));
+    memcpy(td->counts.tx32p,      cts->tx32x32_count,            sizeof(td->counts.tx32p));
+    memcpy(td->counts.tx16p,      cts->tx16x16_count,            sizeof(td->counts.tx16p));
+    memcpy(td->counts.tx8p,       cts->tx8x8_count,              sizeof(td->counts.tx8p));
+    memcpy(td->counts.skip,       cts->mbskip_count,             sizeof(td->counts.skip));
+
+    for (i = 0; i < FF_ARRAY_ELEMS(td->counts.mv_mode); ++i) {
+        td->counts.mv_mode[i][0] = cts->inter_mode_counts[i][1][0];
+        td->counts.mv_mode[i][1] = cts->inter_mode_counts[i][2][0];
+        td->counts.mv_mode[i][2] = cts->inter_mode_counts[i][0][0];
+        td->counts.mv_mode[i][3] = cts->inter_mode_counts[i][2][1];
+    }
+
+    memcpy(td->counts.mv_joint,                 cts->nmvcount.joints,       sizeof(td->counts.mv_joint));
+    for (i = 0; i < FF_ARRAY_ELEMS(td->counts.mv_comp); ++i) {
+        memcpy(td->counts.mv_comp[i].sign,      cts->nmvcount.sign     [i], sizeof(td->counts.mv_comp[i].sign));
+        memcpy(td->counts.mv_comp[i].classes,   cts->nmvcount.classes  [i], sizeof(td->counts.mv_comp[i].classes));
+        memcpy(td->counts.mv_comp[i].class0,    cts->nmvcount.class0   [i], sizeof(td->counts.mv_comp[i].class0));
+        memcpy(td->counts.mv_comp[i].bits,      cts->nmvcount.bits     [i], sizeof(td->counts.mv_comp[i].bits));
+        memcpy(td->counts.mv_comp[i].class0_fp, cts->nmvcount.class0_fp[i], sizeof(td->counts.mv_comp[i].class0_fp));
+        memcpy(td->counts.mv_comp[i].fp,        cts->nmvcount.fp       [i], sizeof(td->counts.mv_comp[i].fp));
+        memcpy(td->counts.mv_comp[i].class0_hp, cts->nmvcount.class0_hp[i], sizeof(td->counts.mv_comp[i].class0_hp));
+        memcpy(td->counts.mv_comp[i].hp,        cts->nmvcount.hp       [i], sizeof(td->counts.mv_comp[i].hp));
+    }
+
+    memcpy(td->counts.partition[0], cts->partition_counts[12], sizeof(td->counts.partition[0]));
+    memcpy(td->counts.partition[1], cts->partition_counts[ 8], sizeof(td->counts.partition[1]));
+    memcpy(td->counts.partition[2], cts->partition_counts[ 4], sizeof(td->counts.partition[2]));
+    memcpy(td->counts.partition[3], cts->partition_counts[ 0], sizeof(td->counts.partition[3]));
+
+    for (i = 0; i < FF_ARRAY_ELEMS(td->counts.coef[0]); ++i) {
+        for (j = 0; j < FF_ARRAY_ELEMS(td->counts.coef[0][0]); ++j) {
+            for (k = 0; k < FF_ARRAY_ELEMS(td->counts.coef[0][0][0]); ++k) {
+                for (l = 0; l < FF_ARRAY_ELEMS(td->counts.coef[0][0][0][0]); ++l) {
+                    memcpy(td->counts.coef[0][i][j][k][l], cts->countCoeffs     [i][j][k][l],
+                        sizeof(td->counts.coef[0][i][j][k][l]));
+                    memcpy(td->counts.coef[1][i][j][k][l], cts->countCoeffs8x8  [i][j][k][l],
+                        sizeof(td->counts.coef[1][i][j][k][l]));
+                    memcpy(td->counts.coef[2][i][j][k][l], cts->countCoeffs16x16[i][j][k][l],
+                        sizeof(td->counts.coef[2][i][j][k][l]));
+                    memcpy(td->counts.coef[3][i][j][k][l], cts->countCoeffs32x32[i][j][k][l],
+                        sizeof(td->counts.coef[3][i][j][k][l]));
+                    td->counts.eob[0][i][j][k][l][0] = cts->countCoeffs     [i][j][k][l][3];
+                    td->counts.eob[0][i][j][k][l][1] = cts->countEobs[0][i][j][k][l] - td->counts.eob[0][i][j][k][l][0];
+                    td->counts.eob[1][i][j][k][l][0] = cts->countCoeffs8x8  [i][j][k][l][3];
+                    td->counts.eob[1][i][j][k][l][1] = cts->countEobs[1][i][j][k][l] - td->counts.eob[1][i][j][k][l][0];
+                    td->counts.eob[2][i][j][k][l][0] = cts->countCoeffs16x16[i][j][k][l][3];
+                    td->counts.eob[2][i][j][k][l][1] = cts->countEobs[2][i][j][k][l] - td->counts.eob[2][i][j][k][l][0];
+                    td->counts.eob[3][i][j][k][l][0] = cts->countCoeffs32x32[i][j][k][l][3];
+                    td->counts.eob[3][i][j][k][l][1] = cts->countEobs[3][i][j][k][l] - td->counts.eob[3][i][j][k][l][0];
+                }
+            }
+        }
+    }
+}
+
 static void tx1_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecContext *avctx,
                                         TX1VP9DecodeContext *ctx)
 {
     VP9Context       *s = avctx->priv_data;
     VP9SharedContext *h = &s->s;
 
-    uint8_t *mem;
     int i;
 
     /* Note: the stride is divided by 2 when the depth is > 8 (not supported on T210) */
@@ -384,10 +457,6 @@ static void tx1_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecContext *
         setup->segmentFeatureData[i][3]   = 0;
     }
 
-    mem = ff_tx1_map_get_addr(&ctx->common_map);
-
-    tx1_vp9_set_tile_sizes((uint16_t *)(mem + ctx->tile_sizes_off), s);
-
     ctx->prev_show_frame = !h->h.invisible;
 }
 
@@ -478,11 +547,29 @@ static int tx1_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
 
     TX1Frame *tf;
     AVTX1Map *input_map;
-    uint8_t *mem;
+    uint8_t *mem, *common_mem;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Starting VP9-TX1 frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
+
+    if (s->s.h.refreshctx && s->s.h.parallelmode) {
+        int i, j, k, l, m;
+
+        for (i = 0; i < FF_ARRAY_ELEMS(s->prob_ctx[s->s.h.framectxid].coef); i++) {
+            for (j = 0; j < FF_ARRAY_ELEMS(s->prob_ctx[s->s.h.framectxid].coef[0]); j++)
+                for (k = 0; k < FF_ARRAY_ELEMS(s->prob_ctx[s->s.h.framectxid].coef[0][0]); k++)
+                    for (l = 0; l < FF_ARRAY_ELEMS(s->prob_ctx[s->s.h.framectxid].coef[0][0][0]); l++)
+                        for (m = 0; m < FF_ARRAY_ELEMS(s->prob_ctx[s->s.h.framectxid].coef[0][0][0][0]); m++)
+                            memcpy(s->prob_ctx[s->s.h.framectxid].coef[i][j][k][l][m],
+                                   s->prob.coef[i][j][k][l][m],
+                                   FF_ARRAY_ELEMS(s->prob_ctx[s->s.h.framectxid].coef[0][0][0][0][0]));
+            if (s->s.h.txfmmode == i)
+                break;
+        }
+
+        s->prob_ctx[s->s.h.framectxid].p = s->prob.p;
+    }
 
     err = ff_tx1_start_frame(avctx, frame, &ctx->core);
     if (err < 0)
@@ -490,9 +577,10 @@ static int tx1_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
 
     tf = fdd->hwaccel_priv;
     input_map = (AVTX1Map *)tf->input_map_ref->data;
-    mem = ff_tx1_map_get_addr(input_map);
+    mem = ff_tx1_map_get_addr(input_map), common_mem = ff_tx1_map_get_addr(&ctx->common_map);
 
     tx1_vp9_prepare_frame_setup((nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
+    tx1_vp9_set_tile_sizes((uint16_t *)(common_mem + ctx->tile_sizes_off), s);
     tx1_vp9_update_probs((nvdec_vp9EntropyProbs_t *)(mem + ctx->prob_tab_off), s, ctx->core.new_input_buffer);
 
     ctx->refs[0] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[0]].f, h->frames[CUR_FRAME].tf.f);
@@ -504,6 +592,7 @@ static int tx1_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
 }
 
 static int tx1_vp9_end_frame(AVCodecContext *avctx) {
+    VP9Context            *s = avctx->priv_data;
     VP9SharedContext      *h = avctx->priv_data;
     TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame           *frame = ctx->current_frame;
@@ -512,13 +601,13 @@ static int tx1_vp9_end_frame(AVCodecContext *avctx) {
     AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;
 
     nvdec_vp9_pic_s *setup;
-    uint8_t *mem;
+    uint8_t *mem, *common_mem;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Ending VP9-TX1 frame with %u slices -> %u bytes\n",
            ctx->core.num_slices, ctx->core.bitstream_len);
 
-    mem = ff_tx1_map_get_addr(input_map);
+    mem = ff_tx1_map_get_addr(input_map), common_mem = ff_tx1_map_get_addr(&ctx->common_map);
 
     setup = (nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off);
     setup->bitstream_size = ctx->core.bitstream_len;
@@ -527,7 +616,26 @@ static int tx1_vp9_end_frame(AVCodecContext *avctx) {
     if (err < 0)
         return err;
 
-    return ff_tx1_end_frame(avctx, frame, &ctx->core, NULL, 0);
+    err = ff_tx1_end_frame(avctx, frame, &ctx->core, NULL, 0);
+    if (err < 0)
+        return err;
+
+    /*
+     * Perform backward probability updates if necessary.
+     * Since it depends on entropy counts calculated by the hardware,
+     * we need to wait for the decode operation to complete.
+     */
+    if (!s->s.h.errorres && !s->s.h.parallelmode) {
+        err = ff_tx1_wait_decode(avctx, frame);
+        if (err < 0)
+            return err;
+
+        tx1_vp9_update_counts((nvdec_vp9EntropyCounts_t *)(common_mem + ctx->ctx_counter_off),
+                              s->td);
+        ff_vp9_adapt_probs(s);
+    }
+
+    return 0;
 }
 
 static int tx1_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
