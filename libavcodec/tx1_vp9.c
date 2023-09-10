@@ -173,14 +173,6 @@ static void tx1_vp9_init_probs(nvdec_vp9EntropyProbs_t *probs, VP9Context *s) {
         memcpy(probs->kf_uv_mode_prob[i], ff_vp9_default_kf_uvmode_probs[pmconv[i]], 8);
         probs->kf_uv_mode_probB[i][0]   = ff_vp9_default_kf_uvmode_probs[pmconv[i]][8];
     }
-
-    for (i = 0; i < 3; ++i)
-        probs->ref_pred_probs[i] = *s->intra_pred_data[i];
-
-    memcpy(probs->mb_segment_tree_probs, h->h.segmentation.prob,      7);
-    memcpy(probs->segment_pred_probs,    h->h.segmentation.pred_prob, 3);
-    // ref_scores
-    // prob_comppred
 }
 
 static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
@@ -194,6 +186,17 @@ static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
         memset(probs, 0, sizeof(nvdec_vp9EntropyProbs_t));
         tx1_vp9_init_probs(probs, s);
     }
+
+    for (i = 0; i < 3; ++i)
+        probs->ref_pred_probs[i] = *s->intra_pred_data[i];
+
+    memcpy(probs->mb_segment_tree_probs,  s->s.h.segmentation.prob,      7);
+    if (s->s.h.segmentation.temporal)
+        memcpy(probs->segment_pred_probs, s->s.h.segmentation.pred_prob, 3);
+    else
+        memset(probs->segment_pred_probs, 0xff, sizeof(probs->segment_pred_probs));
+
+    /* Ignored by official software: ref_scores, prob_comppred */
 
     for (i = 0; i < 7; ++i)
         memcpy(probs->a.inter_mode_prob[i], p->mv_mode[i], 3);
