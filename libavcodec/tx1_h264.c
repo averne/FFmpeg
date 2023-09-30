@@ -359,8 +359,9 @@ static void tx1_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h
         }
     }
 
-    memcpy(setup->WeightScale,    pps->scaling_matrix4, sizeof(setup->WeightScale));
-    memcpy(setup->WeightScale8x8, pps->scaling_matrix8, sizeof(setup->WeightScale8x8));
+    memcpy(setup->WeightScale,       pps->scaling_matrix4,    sizeof(setup->WeightScale));
+    memcpy(setup->WeightScale8x8[0], pps->scaling_matrix8[0], sizeof(setup->WeightScale8x8[0]));
+    memcpy(setup->WeightScale8x8[1], pps->scaling_matrix8[3], sizeof(setup->WeightScale8x8[1]));
 }
 
 static int tx1_h264_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, H264Context *h,
