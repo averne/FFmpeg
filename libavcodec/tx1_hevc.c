@@ -148,9 +148,10 @@ static void tx1_hevc_set_scaling_list(nvdec_hevc_scaling_list_s *list, HEVCConte
 
     int i;
 
-    /* Discarded in official software? */
-    memcpy(list->ScalingListDCCoeff16x16, sl->sl_dc[0], 6);
-    memcpy(list->ScalingListDCCoeff32x32, sl->sl_dc[1], 2);
+    for (i = 0; i < FF_ARRAY_ELEMS(list->ScalingListDCCoeff16x16); ++i)
+        list->ScalingListDCCoeff16x16[i] = sl->sl_dc[0][i];
+    for (i = 0; i < FF_ARRAY_ELEMS(list->ScalingListDCCoeff32x32); ++i)
+        list->ScalingListDCCoeff32x32[i] = sl->sl_dc[1][i * 3];
 
     for (i = 0; i < 6; ++i)
         memcpy(list->ScalingList4x4[i],   sl->sl[0][i], 16);
@@ -217,7 +218,7 @@ static void tx1_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecContext
     mem = ff_tx1_map_get_addr(input_map);
 
     /* Enable 10-bit output if asked for regardless of colorspace */
-    // TODO: Dithered down 8-bit decoding (needs DISPLAY_BUF stuff)
+    /* TODO: Dithered down 8-bit decoding (needs DISPLAY_BUF stuff) */
     if (frames_ctx->sw_format == AV_PIX_FMT_P010 && sps->bit_depth == 10) {
         output_mode = 1;                /* 10-bit bt709 */
     } else {
@@ -507,15 +508,17 @@ static int tx1_hevc_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, HEVCContext *s,
         }
     }
 
-    // TODO: Dithered down 8-bit decoding
-    // if (ctx->last_frame) {
-    //     FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_LUMA_OFFSET,
-    //         ff_tx1_frame_get_fbuf_map(ctx->last_frame), 0, NVHOST_RELOC_TYPE_DEFAULT);
-    //     FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_CHROMA_OFFSET,
-    //         ff_tx1_frame_get_fbuf_map(ctx->last_frame),
-    //         ctx->last_frame->data[1] - ctx->last_frame->data[0],
-    //         NVHOST_RELOC_TYPE_DEFAULT);
-    // }
+    /*
+     * TODO: Dithered down 8-bit decoding
+     * if (ctx->last_frame) {
+     *     FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_LUMA_OFFSET,
+     *         ff_tx1_frame_get_fbuf_map(ctx->last_frame), 0, NVHOST_RELOC_TYPE_DEFAULT);
+     *     FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_CHROMA_OFFSET,
+     *         ff_tx1_frame_get_fbuf_map(ctx->last_frame),
+     *         ctx->last_frame->data[1] - ctx->last_frame->data[0],
+     *         NVHOST_RELOC_TYPE_DEFAULT);
+     * }
+     */
 
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
                       FF_TX1_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
