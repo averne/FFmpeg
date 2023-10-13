@@ -66,12 +66,12 @@ static inline size_t ff_tx1_decode_pick_bitstream_buffer_size(AVCodecContext *av
      * Official software uses a static map of a predetermined size, usually around 0x600000 (6MiB).
      * Our implementation supports dynamically resizing the input map, so be less conservative.
      */
-    if ((avctx->width >= 3840) || (avctx->height >= 2160))  /* 4k */
-        return 0x100000;                                    /* 1MiB */
-    if ((avctx->width >= 1920) || (avctx->height >= 1080))  /* 1080p */
-        return 0x40000;                                     /* 256KiB */
+    if ((avctx->coded_width >= 3840) || (avctx->coded_height >= 2160))  /* 4k */
+        return 0x100000;                                                /* 1MiB */
+    if ((avctx->coded_width >= 1920) || (avctx->coded_height >= 1080))  /* 1080p */
+        return 0x40000;                                                 /* 256KiB */
     else
-        return 0x10000;                                     /* 64KiB */
+        return 0x10000;                                                 /* 64KiB */
 }
 
 static inline AVFrame *ff_tx1_safe_get_ref(AVFrame *ref, AVFrame *fallback) {

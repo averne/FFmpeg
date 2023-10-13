@@ -111,8 +111,8 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
-    aligned_width    = FFALIGN(avctx->width,  MB_SIZE);
-    aligned_height   = FFALIGN(avctx->height, MB_SIZE);
+    aligned_width    = FFALIGN(avctx->coded_width,  MB_SIZE);
+    aligned_height   = FFALIGN(avctx->coded_height, MB_SIZE);
     max_sb_size      = CEILDIV(aligned_width, 64) * CEILDIV(aligned_height, 64);
     segment_rw_size  = FFALIGN(max_sb_size * 32, 0x100);
     filter_size      = FFALIGN(avctx->height, 64) * 988;

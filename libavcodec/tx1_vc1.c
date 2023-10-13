@@ -84,9 +84,8 @@ static int tx1_vc1_decode_init(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 VC1 decoder\n");
 
-
-    width_in_mbs   = FFALIGN(avctx->width,  MB_SIZE) / MB_SIZE;
-    height_in_mbs  = FFALIGN(avctx->height, MB_SIZE) / MB_SIZE;
+    width_in_mbs   = FFALIGN(avctx->coded_width,  MB_SIZE) / MB_SIZE;
+    height_in_mbs  = FFALIGN(avctx->coded_height, MB_SIZE) / MB_SIZE;
 
     num_slices = width_in_mbs * height_in_mbs;
 
@@ -152,6 +151,7 @@ static void tx1_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecContext *
 {
     VC1Context     *v = avctx->priv_data;
     MpegEncContext *s = &v->s;
+    AVFrame    *frame = s->current_picture.f;
 
     /*
      * Note: a lot of fields in this structure are unused by official software,
@@ -165,8 +165,8 @@ static void tx1_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecContext *
         .bitstream_offset        = 0,
 
         .FrameStride             = {
-            s->current_picture.f->linesize[0],
-            s->current_picture.f->linesize[1],
+            frame->linesize[0],
+            frame->linesize[1],
         },
 
         // TODO: Set these for interlaced content
@@ -177,9 +177,9 @@ static void tx1_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecContext *
         .chroma_bot_offset       = 0,
         .chroma_frame_offset     = 0,
 
-        .CodedWidth              = FFALIGN(avctx->width,
+        .CodedWidth              = FFALIGN(avctx->coded_width,
                                            (v->profile == PROFILE_ADVANCED) ? 1 : MB_SIZE),
-        .CodedHeight             = FFALIGN(avctx->height,
+        .CodedHeight             = FFALIGN(avctx->coded_height,
                                            (v->profile == PROFILE_ADVANCED) ? 1 : MB_SIZE),
 
         .HistBufferSize          = ctx->history_size / 256,
@@ -193,9 +193,9 @@ static void tx1_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecContext *
 
         .fastuvmc                = v->fastuvmc,
 
-        .FrameWidth              = FFALIGN(avctx->width,
+        .FrameWidth              = FFALIGN(frame->width,
                                            (v->profile == PROFILE_ADVANCED) ? 1 : MB_SIZE),
-        .FrameHeight             = FFALIGN(avctx->height,
+        .FrameHeight             = FFALIGN(frame->height,
                                            (v->profile == PROFILE_ADVANCED) ? 1 : MB_SIZE),
 
         .profile                 = (v->profile != PROFILE_ADVANCED) ? 1 : 2,
@@ -259,7 +259,7 @@ static void tx1_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecContext *
         setup->displayPara.OutputBottom[0] = 0;
         setup->displayPara.OutputBottom[1] = 0;
         setup->displayPara.OutputStructure = v->interlace & 1;
-        setup->displayPara.OutStride       = s->current_picture.f->linesize[0] & 0xff;
+        setup->displayPara.OutStride       = frame->linesize[0] & 0xff;
     }
 }
 

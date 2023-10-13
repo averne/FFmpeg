@@ -68,8 +68,8 @@ static int tx1_mpeg12_decode_init(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 MPEG12 decoder\n");
 
-    num_slices = (FFALIGN(avctx->width,  MB_SIZE) / MB_SIZE) *
-                 (FFALIGN(avctx->height, MB_SIZE) / MB_SIZE);
+    num_slices = (FFALIGN(avctx->coded_width,  MB_SIZE) / MB_SIZE) *
+                 (FFALIGN(avctx->coded_height, MB_SIZE) / MB_SIZE);
     num_slices = FFMIN(num_slices, 8160);
 
     /* Ignored: histogram map, size 0x400 */

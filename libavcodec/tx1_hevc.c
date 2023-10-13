@@ -109,8 +109,8 @@ static int tx1_hevc_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
-    aligned_width      = FFALIGN(avctx->width,  CTU_SIZE);
-    aligned_height     = FFALIGN(avctx->height, CTU_SIZE);
+    aligned_width      = FFALIGN(avctx->coded_width,  CTU_SIZE);
+    aligned_height     = FFALIGN(avctx->coded_height, CTU_SIZE);
     coloc_size         = (aligned_width * aligned_height) + (aligned_width * aligned_height / MB_SIZE);
     filter_buffer_size = (FILTER_SIZE + SAO_SIZE + BSD_SIZE) * aligned_height;
 

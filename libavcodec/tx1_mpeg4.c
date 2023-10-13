@@ -99,8 +99,8 @@ static int tx1_mpeg4_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
-    width_in_mbs  = FFALIGN(avctx->width,  MB_SIZE) / MB_SIZE;
-    height_in_mbs = FFALIGN(avctx->height, MB_SIZE) / MB_SIZE;
+    width_in_mbs  = FFALIGN(avctx->coded_width,  MB_SIZE) / MB_SIZE;
+    height_in_mbs = FFALIGN(avctx->coded_height, MB_SIZE) / MB_SIZE;
     coloc_size    = FFALIGN(FFALIGN(height_in_mbs, 2) * (width_in_mbs * 64) - 63, 0x100);
     history_size  = FFALIGN(width_in_mbs * 0x100 + 0x1100, 0x100);
     scratch_size  = 0x400;

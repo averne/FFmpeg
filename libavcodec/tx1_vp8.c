@@ -121,7 +121,7 @@ static int tx1_vp8_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
-    width_in_mbs = FFALIGN(avctx->width, MB_SIZE) / MB_SIZE;
+    width_in_mbs = FFALIGN(avctx->coded_width, MB_SIZE) / MB_SIZE;
     ctx->history_size = width_in_mbs * 0x200;
 
     ctx->prob_data_off = 0;

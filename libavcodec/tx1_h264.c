@@ -97,8 +97,8 @@ static int tx1_h264_decode_init(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 H264 decoder\n");
 
-    aligned_width  = FFALIGN(avctx->width,  MB_SIZE);
-    aligned_height = FFALIGN(avctx->height, MB_SIZE);
+    aligned_width  = FFALIGN(avctx->coded_width,  MB_SIZE);
+    aligned_height = FFALIGN(avctx->coded_height, MB_SIZE);
     width_in_mbs   = aligned_width  / MB_SIZE;
     height_in_mbs  = aligned_height / MB_SIZE;
 

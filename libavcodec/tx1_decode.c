@@ -110,7 +110,7 @@ int ff_tx1_decode_init(AVCodecContext *avctx, TX1DecodeContext *ctx) {
     if (err < 0)
         goto fail;
 
-    err = ff_tx1_dfs_init(hw_device_ctx, ctx->channel, avctx->width, avctx->height,
+    err = ff_tx1_dfs_init(hw_device_ctx, ctx->channel, avctx->coded_width, avctx->coded_height,
                           av_q2d(avctx->framerate));
     if (err < 0)
         goto fail;
@@ -387,8 +387,8 @@ int ff_tx1_frame_params(AVCodecContext *avctx,  AVBufferRef *hw_frames_ctx) {
     const AVPixFmtDescriptor *sw_desc;
 
     frames_ctx->format = AV_PIX_FMT_TX1;
-    frames_ctx->width  = FFALIGN(avctx->width,  2); /* NVDEC only supports even sizes */
-    frames_ctx->height = FFALIGN(avctx->height, 2);
+    frames_ctx->width  = FFALIGN(avctx->coded_width,  2); /* NVDEC only supports even sizes */
+    frames_ctx->height = FFALIGN(avctx->coded_height, 2);
 
     sw_desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
     if (!sw_desc)
