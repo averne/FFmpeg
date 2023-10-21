@@ -91,6 +91,9 @@ int ff_tx1_decode_init(AVCodecContext *avctx, TX1DecodeContext *ctx) {
     hw_device_ctx = (AVHWDeviceContext *)frames_ctx->device_ref->data;
     device_hwctx  = hw_device_ctx->hwctx;
 
+    if ((!ctx->is_nvjpg && !device_hwctx->has_nvdec) || (ctx->is_nvjpg && !device_hwctx->has_nvjpg))
+        return AVERROR(EACCES);
+
     ctx->hw_device_ref = av_buffer_ref(frames_ctx->device_ref);
     if (!ctx->hw_device_ref) {
         err = AVERROR(ENOMEM);

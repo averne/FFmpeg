@@ -31,6 +31,7 @@
 
 typedef struct AVTX1DeviceContext {
     AVTX1Channel nvdec_channel, nvjpg_channel, vic_channel;
+    bool has_nvdec, has_nvjpg;
 
     AVTX1Map vic_map;
     uint32_t vic_setup_off, vic_cmdbuf_off, vic_filter_off;

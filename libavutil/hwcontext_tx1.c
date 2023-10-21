@@ -223,8 +223,10 @@ static void tx1_device_uninit(AVHWDeviceContext *ctx) {
 
     ff_tx1_map_destroy(&hwctx->vic_map);
 
-    ff_tx1_channel_close(&hwctx->nvdec_channel);
-    ff_tx1_channel_close(&hwctx->nvjpg_channel);
+    if (hwctx->has_nvdec)
+        ff_tx1_channel_close(&hwctx->nvdec_channel);
+    if (hwctx->has_nvjpg)
+        ff_tx1_channel_close(&hwctx->nvjpg_channel);
     ff_tx1_channel_close(&hwctx->vic_channel);
 
 #ifndef __SWITCH__
@@ -237,8 +239,10 @@ static void tx1_device_uninit(AVHWDeviceContext *ctx) {
     nvFenceExit();
     nvMapExit();
     nvExit();
-    mmuRequestFinalize(&hwctx->nvdec_channel.mmu_request);
-    mmuRequestFinalize(&hwctx->nvjpg_channel.mmu_request);
+    if (hwctx->has_nvdec)
+        mmuRequestFinalize(&hwctx->nvdec_channel.mmu_request);
+    if (hwctx->has_nvjpg)
+        mmuRequestFinalize(&hwctx->nvjpg_channel.mmu_request);
     mmuExit();
 #endif
 }
@@ -252,25 +256,27 @@ static int tx1_device_init(AVHWDeviceContext *ctx) {
     av_log(ctx, AV_LOG_DEBUG, "Initializing TX1 device\n");
 
     err = ff_tx1_channel_open(&hwctx->nvdec_channel, "/dev/nvhost-nvdec");
-    if (err < 0)
-        goto fail;
+    hwctx->has_nvdec = err == 0;
 
     err = ff_tx1_channel_open(&hwctx->nvjpg_channel, "/dev/nvhost-nvjpg");
-    if (err < 0)
-        goto fail;
+    hwctx->has_nvjpg = err == 0;
 
     err = ff_tx1_channel_open(&hwctx->vic_channel, "/dev/nvhost-vic");
     if (err < 0)
         goto fail;
 
     /* Note: Official code only sets this for the nvdec channel */
-    err = ff_tx1_channel_set_submit_timeout(&hwctx->nvdec_channel, 1000);
-    if (err < 0)
-        goto fail;
+    if (hwctx->has_nvdec) {
+        err = ff_tx1_channel_set_submit_timeout(&hwctx->nvdec_channel, 1000);
+        if (err < 0)
+            goto fail;
+    }
 
-    err = ff_tx1_channel_set_submit_timeout(&hwctx->nvjpg_channel, 1000);
-    if (err < 0)
-        goto fail;
+    if (hwctx->has_nvjpg) {
+        err = ff_tx1_channel_set_submit_timeout(&hwctx->nvjpg_channel, 1000);
+        if (err < 0)
+            goto fail;
+    }
 
 #ifdef __SWITCH__
     hwctx->vic_map.owner = hwctx->vic_channel.channel.fd;
@@ -307,13 +313,18 @@ static int tx1_device_init(AVHWDeviceContext *ctx) {
      * The NVHOST_IOCTL_CHANNEL_SET_CLK_RATE ioctl also exists on HOS but the clock rate
      * will be reset when the console goes to sleep.
      */
-    err = AVERROR(mmuRequestInitialize(&hwctx->nvdec_channel.mmu_request, (MmuModuleId)5, 8, false));
-    if (err < 0)
-        goto fail;
 
-    err = AVERROR(mmuRequestInitialize(&hwctx->nvjpg_channel.mmu_request, MmuModuleId_Nvjpg, 8, false));
-    if (err < 0)
-        goto fail;
+    if (hwctx->has_nvdec) {
+        err = AVERROR(mmuRequestInitialize(&hwctx->nvdec_channel.mmu_request, (MmuModuleId)5, 8, false));
+        if (err < 0)
+            goto fail;
+    }
+
+    if (hwctx->has_nvjpg) {
+        err = AVERROR(mmuRequestInitialize(&hwctx->nvjpg_channel.mmu_request, MmuModuleId_Nvjpg, 8, false));
+        if (err < 0)
+            goto fail;
+    }
 #endif
 
     return 0;
