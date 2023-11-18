@@ -879,13 +879,13 @@ static int tx1_vic_prepare_cmdbuf(AVTX1DeviceContext *hwctx, AVTX1Map *map,
     if (err < 0)
         return err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_nonincr(NV_PVIC_THI_INCR_SYNCPT, 1));
+    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT, 1));
     if (err < 0)
         return err;
 
     err = ff_tx1_cmdbuf_push_word(cmdbuf,
-        FF_TX1_VALUE(NV_PVIC_THI_INCR_SYNCPT, INDX, hwctx->vic_channel.syncpt) |
-        FF_TX1_ENUM (NV_PVIC_THI_INCR_SYNCPT, COND, OP_DONE));
+        FF_TX1_VALUE(NV_THI_INCR_SYNCPT, INDX, hwctx->vic_channel.syncpt) |
+        FF_TX1_ENUM (NV_THI_INCR_SYNCPT, COND, OP_DONE));
     if (err < 0)
         return err;
 

@@ -594,7 +594,7 @@ int ff_tx1_cmdbuf_push_word(AVTX1Cmdbuf *cmdbuf, uint32_t word) {
 int ff_tx1_cmdbuf_push_value(AVTX1Cmdbuf *cmdbuf, uint32_t offset, uint32_t word) {
     int err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_incr(NV_PVIC_THI_METHOD0/4, 2));
+    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_incr(NV_THI_METHOD0/4, 2));
     if (err < 0)
         return err;
 

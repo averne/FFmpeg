@@ -60,32 +60,32 @@ static inline uint32_t host1x_opcode_imm(unsigned offset, unsigned value) {
     return (4 << 28) | (offset << 16) | value;
 }
 
-#define NV_PVIC_THI_INCR_SYNCPT                                                 (0x00000000)
-#define NV_PVIC_THI_INCR_SYNCPT_INDX                                            7:0
-#define NV_PVIC_THI_INCR_SYNCPT_COND                                            15:8
-#define NV_PVIC_THI_INCR_SYNCPT_COND_IMMEDIATE                                  (0x00000000)
-#define NV_PVIC_THI_INCR_SYNCPT_COND_OP_DONE                                    (0x00000001)
-#define NV_PVIC_THI_INCR_SYNCPT_ERR                                             (0x00000008)
-#define NV_PVIC_THI_INCR_SYNCPT_ERR_COND_STS_IMM                                0:0
-#define NV_PVIC_THI_INCR_SYNCPT_ERR_COND_STS_OPDONE                             1:1
-#define NV_PVIC_THI_CTXSW_INCR_SYNCPT                                           0x0000000c)
-#define NV_PVIC_THI_CTXSW_INCR_SYNCPT_INDX                                      7:0
-#define NV_PVIC_THI_CTXSW                                                       (0x00000020)
-#define NV_PVIC_THI_CTXSW_CURR_CLASS                                            9:0
-#define NV_PVIC_THI_CTXSW_AUTO_ACK                                              11:11
-#define NV_PVIC_THI_CTXSW_CURR_CHANNEL                                          15:12
-#define NV_PVIC_THI_CTXSW_NEXT_CLASS                                            25:16
-#define NV_PVIC_THI_CTXSW_NEXT_CHANNEL                                          31:28
-#define NV_PVIC_THI_CONT_SYNCPT_EOF                                             (0x00000028)
-#define NV_PVIC_THI_CONT_SYNCPT_EOF_INDEX                                       7:0
-#define NV_PVIC_THI_CONT_SYNCPT_EOF_COND                                        8:8
-#define NV_PVIC_THI_METHOD0                                                     (0x00000040)
-#define NV_PVIC_THI_METHOD0_OFFSET                                              11:0
-#define NV_PVIC_THI_METHOD1                                                     (0x00000044)
-#define NV_PVIC_THI_METHOD1_DATA                                                31:0
-#define NV_PVIC_THI_INT_STATUS                                                  (0x00000078)
-#define NV_PVIC_THI_INT_STATUS_FALCON_INT                                       0:0
-#define NV_PVIC_THI_INT_MASK                                                    (0x0000007c)
-#define NV_PVIC_THI_INT_MASK_FALCON_INT                                         0:0
+#define NV_THI_INCR_SYNCPT                                                 (0x00000000)
+#define NV_THI_INCR_SYNCPT_INDX                                            7:0
+#define NV_THI_INCR_SYNCPT_COND                                            15:8
+#define NV_THI_INCR_SYNCPT_COND_IMMEDIATE                                  (0x00000000)
+#define NV_THI_INCR_SYNCPT_COND_OP_DONE                                    (0x00000001)
+#define NV_THI_INCR_SYNCPT_ERR                                             (0x00000008)
+#define NV_THI_INCR_SYNCPT_ERR_COND_STS_IMM                                0:0
+#define NV_THI_INCR_SYNCPT_ERR_COND_STS_OPDONE                             1:1
+#define NV_THI_CTXSW_INCR_SYNCPT                                           (0x0000000c)
+#define NV_THI_CTXSW_INCR_SYNCPT_INDX                                      7:0
+#define NV_THI_CTXSW                                                       (0x00000020)
+#define NV_THI_CTXSW_CURR_CLASS                                            9:0
+#define NV_THI_CTXSW_AUTO_ACK                                              11:11
+#define NV_THI_CTXSW_CURR_CHANNEL                                          15:12
+#define NV_THI_CTXSW_NEXT_CLASS                                            25:16
+#define NV_THI_CTXSW_NEXT_CHANNEL                                          31:28
+#define NV_THI_CONT_SYNCPT_EOF                                             (0x00000028)
+#define NV_THI_CONT_SYNCPT_EOF_INDEX                                       7:0
+#define NV_THI_CONT_SYNCPT_EOF_COND                                        8:8
+#define NV_THI_METHOD0                                                     (0x00000040)
+#define NV_THI_METHOD0_OFFSET                                              11:0
+#define NV_THI_METHOD1                                                     (0x00000044)
+#define NV_THI_METHOD1_DATA                                                31:0
+#define NV_THI_INT_STATUS                                                  (0x00000078)
+#define NV_THI_INT_STATUS_FALCON_INT                                       0:0
+#define NV_THI_INT_MASK                                                    (0x0000007c)
+#define NV_THI_INT_MASK_FALCON_INT                                         0:0
 
 #endif /* AVUTIL_TX1_HOST1X_H */
