@@ -597,7 +597,6 @@ static int tx1_vp9_end_frame(AVCodecContext *avctx) {
     AVFrame           *frame = h->frames[CUR_FRAME].tf.f;
     FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame             *tf = fdd->hwaccel_priv;
-    AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;
 
     nvdec_vp9_pic_s *setup;
     uint8_t *mem, *common_mem;
@@ -606,7 +605,10 @@ static int tx1_vp9_end_frame(AVCodecContext *avctx) {
     av_log(avctx, AV_LOG_DEBUG, "Ending VP9-TX1 frame with %u slices -> %u bytes\n",
            ctx->core.num_slices, ctx->core.bitstream_len);
 
-    mem = ff_tx1_map_get_addr(input_map), common_mem = ff_tx1_map_get_addr(&ctx->common_map);
+    if (!tf || !ctx->core.num_slices)
+        return 0;
+
+    mem = ff_tx1_map_get_addr((AVTX1Map *)tf->input_map_ref->data);
 
     setup = (nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off);
     setup->bitstream_size = ctx->core.bitstream_len;
@@ -628,6 +630,8 @@ static int tx1_vp9_end_frame(AVCodecContext *avctx) {
         err = ff_tx1_wait_decode(avctx, frame);
         if (err < 0)
             return err;
+
+        common_mem = ff_tx1_map_get_addr(&ctx->common_map);
 
         tx1_vp9_update_counts((nvdec_vp9EntropyCounts_t *)(common_mem + ctx->ctx_counter_off),
                               s->td);

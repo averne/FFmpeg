@@ -288,7 +288,6 @@ static int tx1_vp8_end_frame(AVCodecContext *avctx) {
     AVFrame           *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
     FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame             *tf = fdd->hwaccel_priv;
-    AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;
 
     nvdec_vp8_pic_s *setup;
     uint8_t *mem;
@@ -297,7 +296,10 @@ static int tx1_vp8_end_frame(AVCodecContext *avctx) {
     av_log(avctx, AV_LOG_DEBUG, "Ending VP8-TX1 frame with %u slices -> %u bytes\n",
            ctx->core.num_slices, ctx->core.bitstream_len);
 
-    mem = ff_tx1_map_get_addr(input_map);
+    if (!tf || !ctx->core.num_slices)
+        return 0;
+
+    mem = ff_tx1_map_get_addr((AVTX1Map *)tf->input_map_ref->data);
 
     setup = (nvdec_vp8_pic_s *)(mem + ctx->core.pic_setup_off);
     setup->VLDBufferSize = ctx->core.bitstream_len;
