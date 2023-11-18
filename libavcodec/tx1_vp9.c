@@ -45,7 +45,7 @@ typedef struct TX1VP9DecodeContext {
 
     bool prev_show_frame;
 
-    AVFrame *refs[3], *current_frame;
+    AVFrame *refs[3];
 } TX1VP9DecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -520,10 +520,10 @@ static int tx1_vp9_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP9SharedContext *h,
                       NVHOST_RELOC_TYPE_DEFAULT);                                   \
 })
 
-    PUSH_FRAME(ctx->refs[0],       0);
-    PUSH_FRAME(ctx->refs[1],       1);
-    PUSH_FRAME(ctx->refs[2],       2);
-    PUSH_FRAME(ctx->current_frame, 3);
+    PUSH_FRAME(ctx->refs[0], 0);
+    PUSH_FRAME(ctx->refs[1], 1);
+    PUSH_FRAME(ctx->refs[2], 2);
+    PUSH_FRAME(cur_frame,    3);
 
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
                       FF_TX1_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
@@ -586,7 +586,6 @@ static int tx1_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
     ctx->refs[0] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[0]].f, h->frames[CUR_FRAME].tf.f);
     ctx->refs[1] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[1]].f, h->frames[CUR_FRAME].tf.f);
     ctx->refs[2] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[2]].f, h->frames[CUR_FRAME].tf.f);
-    ctx->current_frame = h->frames[CUR_FRAME].tf.f;
 
     return 0;
 }
@@ -595,7 +594,7 @@ static int tx1_vp9_end_frame(AVCodecContext *avctx) {
     VP9Context            *s = avctx->priv_data;
     VP9SharedContext      *h = avctx->priv_data;
     TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame           *frame = ctx->current_frame;
+    AVFrame           *frame = h->frames[CUR_FRAME].tf.f;
     FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame             *tf = fdd->hwaccel_priv;
     AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;
@@ -641,9 +640,8 @@ static int tx1_vp9_end_frame(AVCodecContext *avctx) {
 static int tx1_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
                                 uint32_t buf_size)
 {
-    VP9SharedContext      *h = avctx->priv_data;
-    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame           *frame = ctx->current_frame;
+    VP9SharedContext *h = avctx->priv_data;
+    AVFrame      *frame = h->frames[CUR_FRAME].tf.f;
 
     int offset = h->h.uncompressed_header_size + h->h.compressed_header_size;
 

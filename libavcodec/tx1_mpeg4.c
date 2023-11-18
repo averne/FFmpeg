@@ -40,7 +40,7 @@ typedef struct TX1MPEG4DecodeContext {
     uint32_t coloc_off, history_off, scratch_off;
     uint32_t history_size, scratch_size;
 
-    AVFrame *current_frame, *prev_frame, *next_frame;
+    AVFrame *prev_frame, *next_frame;
 } TX1MPEG4DecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -233,7 +233,7 @@ static int tx1_mpeg4_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, MpegEncContext *s, TX1M
                       &ctx->common_map, ctx->scratch_off,        NVHOST_RELOC_TYPE_DEFAULT);
 
 #define PUSH_FRAME(fr, offset) ({                                                   \
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0 + offset * 4,         \
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,       \
                       ff_tx1_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
     FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,       \
                       ff_tx1_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
@@ -279,9 +279,8 @@ static int tx1_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint
 
     tx1_mpeg4_prepare_frame_setup((nvdec_mpeg4_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
 
-    ctx->prev_frame    = (s->pict_type != AV_PICTURE_TYPE_I) ? s->last_picture.f : frame;
-    ctx->next_frame    = (s->pict_type == AV_PICTURE_TYPE_B) ? s->next_picture.f : frame;
-    ctx->current_frame = frame;
+    ctx->prev_frame = (s->pict_type != AV_PICTURE_TYPE_I) ? s->last_picture.f : frame;
+    ctx->next_frame = (s->pict_type == AV_PICTURE_TYPE_B) ? s->next_picture.f : frame;
 
     return 0;
 }
@@ -290,7 +289,7 @@ static int tx1_mpeg4_end_frame(AVCodecContext *avctx) {
     Mpeg4DecContext         *m = avctx->priv_data;
     MpegEncContext          *s = &m->m;
     TX1MPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame             *frame = ctx->current_frame;
+    AVFrame             *frame = s->current_picture.f;
     FrameDecodeData       *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame               *tf = fdd->hwaccel_priv;
     AVTX1Map        *input_map = (AVTX1Map *)tf->input_map_ref->data;
@@ -320,8 +319,8 @@ static int tx1_mpeg4_end_frame(AVCodecContext *avctx) {
 static int tx1_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
                                   uint32_t buf_size)
 {
-    TX1MPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame             *frame = ctx->current_frame;
+    Mpeg4DecContext *m = avctx->priv_data;
+    AVFrame     *frame = m->m.current_picture.f;
 
     /* Rewind the bitstream looking for the VOP start marker */
     while (*(uint32_t *)buf != AV_BE2NE32C(VOP_STARTCODE))

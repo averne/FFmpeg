@@ -40,7 +40,7 @@ typedef struct TX1VP8DecodeContext {
     uint32_t history_size;
 
     AVFrame *golden_frame,   *altref_frame,
-            *previous_frame, *current_frame;
+            *previous_frame;
 } TX1VP8DecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -238,7 +238,7 @@ static int tx1_vp8_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP8Context *h,
     PUSH_FRAME(ctx->golden_frame,   0);
     PUSH_FRAME(ctx->altref_frame,   1);
     PUSH_FRAME(ctx->previous_frame, 2);
-    PUSH_FRAME(ctx->current_frame,  3);
+    PUSH_FRAME(cur_frame,           3);
 
     FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
                       FF_TX1_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
@@ -275,10 +275,9 @@ static int tx1_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
     tx1_vp8_prepare_frame_setup((nvdec_vp8_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
 
 #define SAFE_REF(type) (h->framep[(type)] ?: h->framep[VP8_FRAME_CURRENT])
-    ctx->current_frame  =  h->framep[VP8_FRAME_CURRENT]->tf.f;
-    ctx->golden_frame   = ff_tx1_safe_get_ref(SAFE_REF(VP8_FRAME_GOLDEN)  ->tf.f, ctx->current_frame);
-    ctx->altref_frame   = ff_tx1_safe_get_ref(SAFE_REF(VP8_FRAME_ALTREF)  ->tf.f, ctx->current_frame);
-    ctx->previous_frame = ff_tx1_safe_get_ref(SAFE_REF(VP8_FRAME_PREVIOUS)->tf.f, ctx->current_frame);
+    ctx->golden_frame   = ff_tx1_safe_get_ref(SAFE_REF(VP8_FRAME_GOLDEN)  ->tf.f, frame);
+    ctx->altref_frame   = ff_tx1_safe_get_ref(SAFE_REF(VP8_FRAME_ALTREF)  ->tf.f, frame);
+    ctx->previous_frame = ff_tx1_safe_get_ref(SAFE_REF(VP8_FRAME_PREVIOUS)->tf.f, frame);
 
     return 0;
 }
@@ -286,7 +285,7 @@ static int tx1_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
 static int tx1_vp8_end_frame(AVCodecContext *avctx) {
     VP8Context            *h = avctx->priv_data;
     TX1VP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame           *frame = ctx->current_frame;
+    AVFrame           *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
     FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame             *tf = fdd->hwaccel_priv;
     AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;
@@ -313,9 +312,8 @@ static int tx1_vp8_end_frame(AVCodecContext *avctx) {
 static int tx1_vp8_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
                                 uint32_t buf_size)
 {
-    VP8Context            *h = avctx->priv_data;
-    TX1VP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame           *frame = ctx->current_frame;
+    VP8Context  *h = avctx->priv_data;
+    AVFrame *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
 
     int offset = h->keyframe ? 10 : 3;
 

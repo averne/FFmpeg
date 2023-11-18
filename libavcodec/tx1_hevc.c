@@ -43,7 +43,7 @@ typedef struct TX1HEVCDecodeContext {
     uint8_t pattern_id;
 
     AVFrame *ordered_dpb[16+1];
-    AVFrame *scratch_ref, *last_frame, *current_frame;
+    AVFrame *scratch_ref, *last_frame;
     int last_iframe_slot;
 } TX1HEVCDecodeContext;
 
@@ -493,7 +493,7 @@ static int tx1_hevc_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, HEVCContext *s,
                       &ctx->common_map, ctx->coloc_off,          NVHOST_RELOC_TYPE_DEFAULT);
 
 #define PUSH_FRAME(fr, offset) ({                                                   \
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0 + offset * 4,         \
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,       \
                       ff_tx1_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
     FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,       \
                       ff_tx1_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
@@ -555,8 +555,7 @@ static int tx1_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint3
     tx1_hevc_prepare_frame_setup((nvdec_hevc_pic_s *)(mem + ctx->core.pic_setup_off),
                                  avctx, frame, ctx);
 
-    ctx->current_frame = frame;
-    ctx->last_frame    = frame;
+    ctx->last_frame = frame;
 
     return 0;
 }
@@ -564,10 +563,10 @@ static int tx1_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint3
 static int tx1_hevc_end_frame(AVCodecContext *avctx) {
     HEVCContext            *s = avctx->priv_data;
     TX1HEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame           *frame = ctx->current_frame;
-    FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
-    TX1Frame             *tf = fdd->hwaccel_priv;
-    AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;
+    AVFrame            *frame = s->ref->frame;
+    FrameDecodeData      *fdd = (FrameDecodeData *)frame->private_ref->data;
+    TX1Frame              *tf = fdd->hwaccel_priv;
+    AVTX1Map       *input_map = (AVTX1Map *)tf->input_map_ref->data;
 
     nvdec_hevc_pic_s *setup;
     uint8_t *mem;
@@ -591,11 +590,12 @@ static int tx1_hevc_end_frame(AVCodecContext *avctx) {
 static int tx1_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
                                  uint32_t buf_size)
 {
-    TX1HEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame            *frame = ctx->current_frame;
+    HEVCContext            *s = avctx->priv_data;
+    AVFrame            *frame = s->ref->frame;
     FrameDecodeData      *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame              *tf = fdd->hwaccel_priv;
     AVTX1Map       *input_map = (AVTX1Map *)tf->input_map_ref->data;
+    TX1HEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     uint8_t *mem;
 

@@ -42,7 +42,7 @@ typedef struct TX1VC1DecodeContext {
 
     bool is_first_slice;
 
-    AVFrame *current_frame, *prev_frame, *next_frame;
+    AVFrame *prev_frame, *next_frame;
 } TX1VC1DecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -302,7 +302,7 @@ static int tx1_vc1_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VC1Context *v, TX1VC1Deco
                       &ctx->common_map, ctx->scratch_off,            NVHOST_RELOC_TYPE_DEFAULT);
 
 #define PUSH_FRAME(fr, offset) ({                                                   \
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0 + offset * 4,         \
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,       \
                       ff_tx1_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
     FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,       \
                       ff_tx1_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
@@ -363,9 +363,8 @@ static int tx1_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
 
     tx1_vc1_prepare_frame_setup((nvdec_vc1_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
 
-    ctx->prev_frame    = ff_tx1_safe_get_ref(s->last_picture.f, frame);
-    ctx->next_frame    = ff_tx1_safe_get_ref(s->next_picture.f, frame);
-    ctx->current_frame = frame;
+    ctx->prev_frame = ff_tx1_safe_get_ref(s->last_picture.f, frame);
+    ctx->next_frame = ff_tx1_safe_get_ref(s->next_picture.f, frame);
 
     return 0;
 }
@@ -373,7 +372,7 @@ static int tx1_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
 static int tx1_vc1_end_frame(AVCodecContext *avctx) {
     VC1Context            *v = avctx->priv_data;
     TX1VC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame           *frame = ctx->current_frame;
+    AVFrame           *frame = v->s.current_picture.f;
     FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame             *tf = fdd->hwaccel_priv;
     AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;
@@ -405,7 +404,7 @@ static int tx1_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
 {
     VC1Context            *v = avctx->priv_data;
     TX1VC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame           *frame = ctx->current_frame;
+    AVFrame           *frame = v->s.current_picture.f;
     FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame             *tf = fdd->hwaccel_priv;
     AVTX1Map      *input_map = (AVTX1Map *)tf->input_map_ref->data;

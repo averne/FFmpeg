@@ -52,8 +52,6 @@ typedef struct TX1H264DecodeContext {
         pic_id_map[16+1], scratch_ref, cur_frame;
 
     uint64_t refs_mask, ordered_dpb_mask, pic_id_mask;
-
-    AVFrame *current_frame;
 } TX1H264DecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -403,7 +401,7 @@ static int tx1_h264_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, H264Context *h,
                       &ctx->common_map, ctx->history_off,            NVHOST_RELOC_TYPE_DEFAULT);
 
 #define PUSH_FRAME(ref, offset) ({                                              \
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0 + offset * 4,     \
+    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,   \
                       ref.map, 0, NVHOST_RELOC_TYPE_DEFAULT);                   \
     FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,   \
                       ref.map, ref.chroma_off, NVHOST_RELOC_TYPE_DEFAULT);      \
@@ -452,15 +450,13 @@ static int tx1_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint3
 
     tx1_h264_prepare_frame_setup((nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
 
-    ctx->current_frame = frame;
-
     return 0;
 }
 
 static int tx1_h264_end_frame(AVCodecContext *avctx) {
     H264Context            *h = avctx->priv_data;
     TX1H264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame            *frame = ctx->current_frame;
+    AVFrame            *frame = h->cur_pic_ptr->f;
     FrameDecodeData      *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame              *tf = fdd->hwaccel_priv;
     AVTX1Map       *input_map = (AVTX1Map *)tf->input_map_ref->data;
@@ -478,7 +474,7 @@ static int tx1_h264_end_frame(AVCodecContext *avctx) {
     setup->stream_len  = ctx->core.bitstream_len + sizeof(bitstream_end_sequence);
     setup->slice_count = ctx->core.num_slices;
 
-    err = tx1_h264_prepare_cmdbuf(&ctx->core.cmdbuf, h, ctx->current_frame, ctx);
+    err = tx1_h264_prepare_cmdbuf(&ctx->core.cmdbuf, h, frame, ctx);
     if (err < 0)
         return err;
 
@@ -489,8 +485,8 @@ static int tx1_h264_end_frame(AVCodecContext *avctx) {
 static int tx1_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
                                  uint32_t buf_size)
 {
-    TX1H264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame            *frame = ctx->current_frame;
+    H264Context *h = avctx->priv_data;
+    AVFrame *frame = h->cur_pic_ptr->f;
 
     return ff_tx1_decode_slice(avctx, frame, buf, buf_size, true);
 }

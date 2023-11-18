@@ -33,8 +33,6 @@
 
 typedef struct TX1MJPEGDecodeContext {
     TX1DecodeContext core;
-
-    AVFrame *current_frame;
 } TX1MJPEGDecodeContext;
 
 static int tx1_mjpeg_decode_uninit(AVCodecContext *avctx) {
@@ -134,8 +132,8 @@ static void tx1_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, MJpe
         .stream_chroma_mode   = input_chroma_mode,
         .output_chroma_mode   = output_chroma_mode,
         .output_pixel_format  = 0,  /* YUV */
-        .output_stride_luma   = ctx->current_frame->linesize[0],
-        .output_stride_chroma = ctx->current_frame->linesize[1],
+        .output_stride_luma   = s->picture->linesize[0],
+        .output_stride_chroma = s->picture->linesize[1],
 
         .tile_mode            = 0,  /* Pitch linear (tiled formats are unsupported by the T210) */
         .memory_mode          = memory_mode,
@@ -228,15 +226,13 @@ static int tx1_mjpeg_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint
     if (err < 0)
         return err;
 
-    ctx->current_frame = frame;
-
     return 0;
 }
 
 static int tx1_mjpeg_end_frame(AVCodecContext *avctx) {
     MJpegDecodeContext      *s = avctx->priv_data;
     TX1MJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame             *frame = ctx->current_frame;
+    AVFrame             *frame = s->picture;
     FrameDecodeData       *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame               *tf = fdd->hwaccel_priv;
     AVTX1Map        *input_map = (AVTX1Map *)tf->input_map_ref->data;
@@ -268,7 +264,7 @@ static int tx1_mjpeg_end_frame(AVCodecContext *avctx) {
 static int tx1_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     MJpegDecodeContext      *s = avctx->priv_data;
     TX1MJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame             *frame = ctx->current_frame;
+    AVFrame             *frame = s->picture;
     FrameDecodeData       *fdd = (FrameDecodeData *)frame->private_ref->data;
 
     TX1Frame *tf;

@@ -36,7 +36,7 @@
 typedef struct TX1MPEG12DecodeContext {
     TX1DecodeContext core;
 
-    AVFrame *current_frame, *prev_frame, *next_frame;
+    AVFrame *prev_frame, *next_frame;
 } TX1MPEG12DecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -238,9 +238,8 @@ static int tx1_mpeg12_start_frame(AVCodecContext *avctx, const uint8_t *buf, uin
 
     tx1_mpeg12_prepare_frame_setup((nvdec_mpeg2_pic_s *)(mem + ctx->core.pic_setup_off), s, ctx);
 
-    ctx->prev_frame    = (s->pict_type != AV_PICTURE_TYPE_I) ? s->last_picture.f : frame;
-    ctx->next_frame    = (s->pict_type == AV_PICTURE_TYPE_B) ? s->next_picture.f : frame;
-    ctx->current_frame = frame;
+    ctx->prev_frame = (s->pict_type != AV_PICTURE_TYPE_I) ? s->last_picture.f : frame;
+    ctx->next_frame = (s->pict_type == AV_PICTURE_TYPE_B) ? s->next_picture.f : frame;
 
     return 0;
 }
@@ -248,7 +247,7 @@ static int tx1_mpeg12_start_frame(AVCodecContext *avctx, const uint8_t *buf, uin
 static int tx1_mpeg12_end_frame(AVCodecContext *avctx) {
     MpegEncContext           *s = avctx->priv_data;
     TX1MPEG12DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame              *frame = ctx->current_frame;
+    AVFrame              *frame = s->current_picture.f;
     FrameDecodeData        *fdd = (FrameDecodeData *)frame->private_ref->data;
     TX1Frame                *tf = fdd->hwaccel_priv;
     AVTX1Map         *input_map = (AVTX1Map *)tf->input_map_ref->data;
@@ -276,8 +275,8 @@ static int tx1_mpeg12_end_frame(AVCodecContext *avctx) {
 }
 
 static int tx1_mpeg12_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
-    TX1MPEG12DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame              *frame = ctx->current_frame;
+    MpegEncContext *s = avctx->priv_data;
+    AVFrame    *frame = s->current_picture.f;
 
     return ff_tx1_decode_slice(avctx, frame, buf, buf_size, false);
 }
