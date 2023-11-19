@@ -5994,7 +5994,7 @@ case $target_os in
         ;;
     horizon)
         enable section_data_rel_ro
-        network_extralibs="-lnx"
+        add_extralibs -lnx
         ;;
     none)
         ;;
