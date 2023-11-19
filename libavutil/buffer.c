@@ -16,9 +16,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config.h"
+
 #include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
+#if HAVE_MALLOC_H
+#include <malloc.h>
+#endif
 
 #include "avassert.h"
 #include "buffer_internal.h"
@@ -98,8 +103,12 @@ AVBufferRef *av_buffer_aligned_alloc(size_t size, size_t align)
 #if HAVE_POSIX_MEMALIGN
     if (posix_memalign((void **)&data, align, size))
         return NULL;
-#else
+#elif HAVE_ALIGNED_MALLOC
     data = aligned_alloc(align, size);
+#elif HAVE_MEMALIGN
+    data = memalign(align, size);
+#else
+    return NULL;
 #endif
 
     if (!data)
