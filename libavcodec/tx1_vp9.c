@@ -99,7 +99,7 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
                                        FF_TX1_MAP_ALIGN);
     ctx->prob_tab_off        = FFALIGN(ctx->core.cmdbuf_off    + 2*FF_TX1_MAP_ALIGN,
                                        FF_TX1_MAP_ALIGN);
-    ctx->core.bitstream_off  = FFALIGN(ctx->prob_tab_off       + 0xf00,
+    ctx->core.bitstream_off  = FFALIGN(ctx->prob_tab_off       + sizeof(nvdec_vp9EntropyProbs_t),
                                        FF_TX1_MAP_ALIGN);
     ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);

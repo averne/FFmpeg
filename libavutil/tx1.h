@@ -82,6 +82,11 @@ typedef struct ACTX1Cmdbuf {
     uint32_t                   *fences;
 #endif
     uint32_t num_syncpt_incrs;
+
+#ifndef __SWITCH__
+    struct nvhost_waitchk      *waitchks;
+    uint32_t num_waitchks;
+#endif
 } AVTX1Cmdbuf;
 
 int ff_tx1_channel_open(AVTX1Channel *channel, const char *dev);
@@ -131,8 +136,10 @@ int ff_tx1_cmdbuf_push_word(AVTX1Cmdbuf *cmdbuf, uint32_t word);
 int ff_tx1_cmdbuf_push_value(AVTX1Cmdbuf *cmdbuf, uint32_t offset, uint32_t word);
 int ff_tx1_cmdbuf_push_reloc(AVTX1Cmdbuf *cmdbuf, uint32_t offset, AVTX1Map *target, uint32_t target_offset,
                              int reloc_type, int shift);
+int ff_tx1_cmdbuf_push_wait(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence);
 int ff_tx1_cmdbuf_add_syncpt_incr(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t
                                   num_incrs, uint32_t fence);
+int ff_tx1_cmdbuf_add_waitchk(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence);
 
 static inline uint32_t ff_tx1_map_get_handle(AVTX1Map *map) {
 #ifndef __SWITCH__

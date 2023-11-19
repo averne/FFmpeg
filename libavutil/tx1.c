@@ -150,7 +150,7 @@ int ff_tx1_channel_submit(AVTX1Channel *channel, AVTX1Cmdbuf *cmdbuf, uint32_t *
         .num_syncpt_incrs        = cmdbuf->num_syncpt_incrs,
         .num_cmdbufs             = cmdbuf->num_cmdbufs,
         .num_relocs              = cmdbuf->num_relocs,
-        .num_waitchks            = 0,
+        .num_waitchks            = cmdbuf->num_waitchks,
         .timeout                 = 0,
         .flags                   = 0,
         .fence                   = 0,
@@ -163,7 +163,7 @@ int ff_tx1_channel_submit(AVTX1Channel *channel, AVTX1Cmdbuf *cmdbuf, uint32_t *
         .cmdbufs                 = (uintptr_t)cmdbuf->cmdbufs,
         .relocs                  = (uintptr_t)cmdbuf->relocs,
         .reloc_shifts            = (uintptr_t)cmdbuf->reloc_shifts,
-        .waitchks                = 0,
+        .waitchks                = (uintptr_t)cmdbuf->waitchks,
         .waitbases               = 0,
         .class_ids               = (uintptr_t)cmdbuf->class_ids,
         .fences                  = (uintptr_t)cmdbuf->fences,
@@ -442,6 +442,7 @@ int ff_tx1_cmdbuf_init(AVTX1Cmdbuf *cmdbuf) {
     cmdbuf->num_cmdbufs      = 0;
 #ifndef __SWITCH__
     cmdbuf->num_relocs       = 0;
+    cmdbuf->num_waitchks     = 0;
 #endif
     cmdbuf->num_syncpt_incrs = 0;
 
@@ -519,7 +520,7 @@ int ff_tx1_cmdbuf_clear(AVTX1Cmdbuf *cmdbuf) {
 
     cmdbuf->num_cmdbufs = 0, cmdbuf->num_syncpt_incrs = 0;
 #ifndef __SWITCH__
-    cmdbuf->num_relocs = 0;
+    cmdbuf->num_relocs = 0, cmdbuf->num_waitchks = 0;
 #endif
 
     cmdbuf->cur_word = (uint32_t *)(mem + cmdbuf->mem_offset);
@@ -658,6 +659,30 @@ int ff_tx1_cmdbuf_push_reloc(AVTX1Cmdbuf *cmdbuf, uint32_t offset, AVTX1Map *tar
 #endif
 }
 
+int ff_tx1_cmdbuf_push_wait(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence) {
+    int err;
+
+    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_setclass(HOST1X_CLASS_HOST1X, 0, 0));
+    if (err < 0)
+        return err;
+
+    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_mask(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD,
+                                  (1<<(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD - NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD)) |
+                                  (1<<(NV_CLASS_HOST_WAIT_SYNCPT         - NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD))));
+    if (err < 0)
+        return err;
+
+    err = ff_tx1_cmdbuf_push_word(cmdbuf, fence);
+    if (err < 0)
+        return err;
+
+    err = ff_tx1_cmdbuf_push_word(cmdbuf, syncpt);
+    if (err < 0)
+        return err;
+
+    return 0;
+}
+
 int ff_tx1_cmdbuf_add_syncpt_incr(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt,
                                   uint32_t num_incrs, uint32_t fence)
 {
@@ -695,4 +720,31 @@ int ff_tx1_cmdbuf_add_syncpt_incr(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt,
     cmdbuf->num_syncpt_incrs++;
 
     return 0;
+}
+
+int ff_tx1_cmdbuf_add_waitchk(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence) {
+#ifndef __SWITCH__
+    uint8_t *mem;
+    void *tmp;
+    int err;
+
+    mem = ff_tx1_map_get_addr(cmdbuf->map);
+
+    tmp = av_realloc_array(cmdbuf->waitchks, cmdbuf->num_waitchks + 1, sizeof(*cmdbuf->waitchks));
+    if (!tmp)
+        return AVERROR(ENOMEM);
+
+    cmdbuf->waitchks = tmp;
+
+    cmdbuf->waitchks[cmdbuf->num_waitchks] = (struct nvhost_waitchk){
+        .mem       = ff_tx1_map_get_handle(cmdbuf->map),
+        .offset    = (uint8_t *)cmdbuf->cur_word - mem - sizeof(uint32_t),
+        .syncpt_id = syncpt,
+        .thresh    = fence,
+    };
+
+    cmdbuf->num_waitchks++;
+#endif
+
+    return ff_tx1_cmdbuf_push_wait(cmdbuf, syncpt, fence);
 }

@@ -60,6 +60,9 @@ static inline uint32_t host1x_opcode_imm(unsigned offset, unsigned value) {
     return (4 << 28) | (offset << 16) | value;
 }
 
+#define NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD                                  (0x0000004e)
+#define NV_CLASS_HOST_WAIT_SYNCPT                                          (0x00000050)
+
 #define NV_THI_INCR_SYNCPT                                                 (0x00000000)
 #define NV_THI_INCR_SYNCPT_INDX                                            7:0
 #define NV_THI_INCR_SYNCPT_COND                                            15:8
