@@ -376,8 +376,6 @@ enum VP9_FRAME_SFC_ID
 typedef struct _nvdec_vp9_pic_s
 {
     // reserved[0xc] = bitstream_size_in_bytes;
-    // reserved[0xd] = do_pass_1 (always 0)
-    // reserved[0xe] = displayParams?
     NvU32   reserved0[12];
     NvU32   bitstream_size;
     NvU32   reserved0_[2];
