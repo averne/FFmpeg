@@ -524,8 +524,8 @@ int ff_tx1_dfs_init(AVHWDeviceContext *ctx, AVTX1Channel *channel, int width, in
     uint32_t max_freq, lowcorner;
     int num_mbs, err;
 
-    hwctx->dfs_num_samples        = 5;
-    hwctx->dfs_decode_ema_damping = 0.2;
+    hwctx->dfs_num_samples        = 20;
+    hwctx->dfs_decode_ema_damping = 0.1;
     hwctx->dfs_sampling_start_ts  = av_gettime_relative();
 
     /*
