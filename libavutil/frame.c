@@ -216,7 +216,7 @@ static int get_video_buffer(AVFrame *frame, int align)
         total_size += sizes[i];
     }
 
-    frame->buf[0] = av_buffer_aligned_alloc(total_size, 0x100);
+    frame->buf[0] = av_buffer_alloc(total_size);
     if (!frame->buf[0]) {
         ret = AVERROR(ENOMEM);
         goto fail;

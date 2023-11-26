@@ -936,6 +936,73 @@ fail:
     return err;
 }
 
+static void tx1_unswizzle_nvdec_surf(void *out, int out_stride, void *in, int in_stride, int h) {
+    /*
+     * Adapted from https://fgiesen.wordpress.com/2011/01/17/texture-tiling-and-swizzling/
+     * We process 16x2 bytes at a time. Horizontally, this is the size of a linear atom
+     * in a 16Bx2 sector, conveniently also the size of a cache line.
+     * The input pitch is guaranteed to fulfill this condition because of GOB alignment.
+     *
+     * NVDEC always uses a GOB height of 2 (block height of 16, in line with macroblock dimensions).
+     * The corresponding swizzling pattern is the following:
+     *    y3 y2 y1 y0 x5 x4 x3 x2 x1 x0
+     * x: ___x5_______x4____x3 x3 x1 x0
+     * y: y3____y2 y1____y0____________
+     *
+     * Addresses for the 4 lower bits can then be copied as-is (16 bytes).
+     * As a further optimization, the y0 bit is also handled within the same inner loop,
+     * which halves the total number of iterations.
+     */
+
+    __uint128_t *src = in, *dst = out, *src_line, *dst_line;
+    uint32_t w = out_stride / 16, offs_x = 0, offs_y = 0, offs_line;
+    uint32_t x_mask = -0x2e, y_mask = 0x2c;
+    int x, y;
+
+    for (y = 0; y < h; y += 2) {
+        dst_line = dst + y * w;
+        src_line = src + offs_y;
+
+        offs_line = offs_x;
+        for (x = 0; x < w; ++x) {
+            dst_line[x+0] = src_line[offs_line+0];
+            dst_line[x+w] = src_line[offs_line+1];
+            offs_line = (offs_line - x_mask) & x_mask;
+        }
+
+        offs_y = (offs_y - y_mask) & y_mask;
+
+        /* Wrap into next tile row */
+        if (!offs_y)
+            offs_x += in_stride;
+    }
+}
+
+static int tx1_cpu_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src) {
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(ctx->sw_format);
+    AVTX1Map *src_map;
+    int i;
+
+    src_map = ff_tx1_frame_get_fbuf_map(src);
+
+    if (dst->format != ctx->sw_format) {
+        av_log(ctx, AV_LOG_WARNING, "Source and destination must have the same format for cpu transfers\n");
+        return AVERROR(EINVAL);
+    }
+
+    for (i = 0; i < av_pix_fmt_count_planes(dst->format); ++i) {
+        if (src_map->is_linear)
+            av_image_copy_plane(dst->data[i], dst->linesize[i], src->data[i], src->linesize[i],
+                                FFMIN(dst->linesize[i], src->linesize[i]),
+                                dst->height >> (i ? desc->log2_chroma_h : 0));
+        else
+            tx1_unswizzle_nvdec_surf(dst->data[i], dst->linesize[i], src->data[i], src->linesize[i],
+                                     dst->height >> (i ? desc->log2_chroma_h : 0));
+    }
+
+    return 0;
+}
+
 static int tx1_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src) {
 #ifdef __SWITCH__
     AVTX1DeviceContext *hwctx = ctx->device_ctx->hwctx;
@@ -949,6 +1016,12 @@ static int tx1_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst, const AV
 
     av_log(ctx, AV_LOG_DEBUG, "Transferring data from TX1 device, %s -> %s\n",
            av_get_pix_fmt_name(src->format), av_get_pix_fmt_name(dst->format));
+
+    if (((uintptr_t)dst->data[0] & 0xff) || ((uintptr_t)dst->data[1] & 0xff) || (dst->linesize[0] & 0xff)) {
+        av_log(ctx, AV_LOG_WARNING, "Destination address/pitch not aligned to 256, "
+                                    "falling back to slower cpu transfer\n");
+        return tx1_cpu_transfer_data(ctx, dst, src);
+    }
 
     if (!src->hw_frames_ctx || dst->hw_frames_ctx)
         return AVERROR(ENOSYS);
