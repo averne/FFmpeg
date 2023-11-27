@@ -50,11 +50,27 @@ static int tx1_mjpeg_decode_uninit(AVCodecContext *avctx) {
 }
 
 static int tx1_mjpeg_decode_init(AVCodecContext *avctx) {
+    MJpegDecodeContext      *s = avctx->priv_data;
     TX1MJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    int err;
+
+    enum AVPixelFormat fmt;
+    int luma, err;
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 MJPEG decoder\n");
+
+    /* Reject encodes with known hardware issues */
+    if (avctx->profile != AV_PROFILE_MJPEG_HUFFMAN_BASELINE_DCT) {
+        av_log(avctx, AV_LOG_ERROR, "Non-baseline encoded jpegs are not supported by NVJPG\n");
+        return AVERROR(EINVAL);
+    }
+
+    fmt = s->avctx->pix_fmt, luma = s->comp_index[0];
+    if ((fmt == AV_PIX_FMT_YUV444P || fmt == AV_PIX_FMT_YUVJ444P)
+            && (s->h_count[luma] != 1 || s->v_count[luma] != 1)) {
+        av_log(avctx, AV_LOG_ERROR, "Subsampled YUV444 is not supported by NVJPG\n");
+        return AVERROR(EINVAL);
+    }
 
     ctx->core.pic_setup_off  = 0;
     ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvjpg_dec_drv_pic_setup_s),
@@ -150,16 +166,16 @@ static void tx1_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, MJpe
             setup->huffTab[1][i].codeNum[j] = s->raw_huffman_lengths[1][i][j];
         }
 
-        memcpy(setup->huffTab[0][i].symbol, s->raw_huffman_values[0][i], 162);
-        memcpy(setup->huffTab[1][i].symbol, s->raw_huffman_values[1][i], 162);
+        memcpy(setup->huffTab[0][i].symbol, s->raw_huffman_values[0][i], sizeof(setup->huffTab[0][i].symbol));
+        memcpy(setup->huffTab[1][i].symbol, s->raw_huffman_values[1][i], sizeof(setup->huffTab[1][i].symbol));
     }
 
     for (i = 0; i < s->nb_components; ++i) {
-        j = s->component_id[i] - 1;
-        setup->blkPar[j].ac     = s->ac_index[i];
-        setup->blkPar[j].dc     = s->dc_index[i];
-        setup->blkPar[j].hblock = s->h_count[i];
-        setup->blkPar[j].vblock = s->v_count[i];
+        j = s->comp_index[i];
+        setup->blkPar[j].ac     = s->ac_index   [i];
+        setup->blkPar[j].dc     = s->dc_index   [i];
+        setup->blkPar[j].hblock = s->h_count    [i];
+        setup->blkPar[j].vblock = s->v_count    [i];
         setup->blkPar[j].quant  = s->quant_index[i];
     }
 
