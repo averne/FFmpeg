@@ -29,24 +29,24 @@
 #include "vp9data.h"
 #include "vp9dec.h"
 #include "decode.h"
-#include "tx1_decode.h"
+#include "nvtegra_decode.h"
 
 #include "libavutil/pixdesc.h"
-#include "libavutil/tx1_host1x.h"
+#include "libavutil/nvtegra_host1x.h"
 
-typedef struct TX1VP9DecodeContext {
-    TX1DecodeContext core;
+typedef struct NVTegraVP9DecodeContext {
+    NVTegraDecodeContext core;
 
     uint32_t prob_tab_off;
 
-    AVTX1Map common_map;
+    AVNVTegraMap common_map;
     uint32_t segment_rw1_off, segment_rw2_off, tile_sizes_off, filter_off,
              col_mvrw1_off, col_mvrw2_off, ctx_counter_off;
 
     bool prev_show_frame;
 
     AVFrame *refs[3];
-} TX1VP9DecodeContext;
+} NVTegraVP9DecodeContext;
 
 /* Size (width, height) of a macroblock */
 #define MB_SIZE 16
@@ -59,29 +59,29 @@ typedef struct TX1VP9DecodeContext {
 /* Prediction modes aren't layed out in the same order in ffmpeg's defaults than in hardware */
 static const uint8_t pmconv[] = { 2, 0, 1, 3, 4, 5, 6, 8, 7, 9 };
 
-static int tx1_vp9_decode_uninit(AVCodecContext *avctx) {
-    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_vp9_decode_uninit(AVCodecContext *avctx) {
+    NVTegraVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Deinitializing TX1 VP9 decoder\n");
+    av_log(avctx, AV_LOG_DEBUG, "Deinitializing NVTEGRA VP9 decoder\n");
 
-    err = ff_tx1_map_destroy(&ctx->common_map);
+    err = ff_nvtegra_map_destroy(&ctx->common_map);
     if (err < 0)
         return err;
 
-    err = ff_tx1_decode_uninit(avctx, &ctx->core);
+    err = ff_nvtegra_decode_uninit(avctx, &ctx->core);
     if (err < 0)
         return err;
 
     return 0;
 }
 
-static int tx1_vp9_decode_init(AVCodecContext *avctx) {
-    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_vp9_decode_init(AVCodecContext *avctx) {
+    NVTegraVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 #ifdef __SWITCH__
-    AVHWDeviceContext *hw_device_ctx;
-    AVTX1DeviceContext *device_hwctx;
+    AVHWDeviceContext      *hw_device_ctx;
+    AVNVTegraDeviceContext *device_hwctx;
 #endif
 
     uint32_t aligned_width, aligned_height, max_sb_size,
@@ -90,24 +90,24 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 VP9 decoder\n");
+    av_log(avctx, AV_LOG_DEBUG, "Initializing NVTEGRA VP9 decoder\n");
 
     ctx->core.pic_setup_off  = 0;
     ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp9_pic_s),
-                                       FF_TX1_MAP_ALIGN);
+                                       FF_NVTEGRA_MAP_ALIGN);
     ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
-                                       FF_TX1_MAP_ALIGN);
-    ctx->prob_tab_off        = FFALIGN(ctx->core.cmdbuf_off    + 2*FF_TX1_MAP_ALIGN,
-                                       FF_TX1_MAP_ALIGN);
+                                       FF_NVTEGRA_MAP_ALIGN);
+    ctx->prob_tab_off        = FFALIGN(ctx->core.cmdbuf_off    + 2*FF_NVTEGRA_MAP_ALIGN,
+                                       FF_NVTEGRA_MAP_ALIGN);
     ctx->core.bitstream_off  = FFALIGN(ctx->prob_tab_off       + sizeof(nvdec_vp9EntropyProbs_t),
-                                       FF_TX1_MAP_ALIGN);
-    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
+                                       FF_NVTEGRA_MAP_ALIGN);
+    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_nvtegra_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
     ctx->core.max_cmdbuf_size    = ctx->prob_tab_off        - ctx->core.cmdbuf_off;
     ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
 
-    err = ff_tx1_decode_init(avctx, &ctx->core);
+    err = ff_nvtegra_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
@@ -120,12 +120,12 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     ctx_counter_size = FFALIGN(sizeof(nvdec_vp9EntropyCounts_t), 0x100);
 
     ctx->segment_rw1_off = 0;
-    ctx->segment_rw2_off = FFALIGN(ctx->segment_rw1_off + segment_rw_size,  FF_TX1_MAP_ALIGN);
-    ctx->tile_sizes_off  = FFALIGN(ctx->segment_rw2_off + segment_rw_size,  FF_TX1_MAP_ALIGN);
-    ctx->filter_off      = FFALIGN(ctx->tile_sizes_off  + 0x700,            FF_TX1_MAP_ALIGN);
-    ctx->col_mvrw1_off   = FFALIGN(ctx->filter_off      + filter_size,      FF_TX1_MAP_ALIGN);
-    ctx->col_mvrw2_off   = FFALIGN(ctx->col_mvrw1_off   + col_mvrw_size,    FF_TX1_MAP_ALIGN);
-    ctx->ctx_counter_off = FFALIGN(ctx->col_mvrw2_off   + col_mvrw_size,    FF_TX1_MAP_ALIGN);
+    ctx->segment_rw2_off = FFALIGN(ctx->segment_rw1_off + segment_rw_size,  FF_NVTEGRA_MAP_ALIGN);
+    ctx->tile_sizes_off  = FFALIGN(ctx->segment_rw2_off + segment_rw_size,  FF_NVTEGRA_MAP_ALIGN);
+    ctx->filter_off      = FFALIGN(ctx->tile_sizes_off  + 0x700,            FF_NVTEGRA_MAP_ALIGN);
+    ctx->col_mvrw1_off   = FFALIGN(ctx->filter_off      + filter_size,      FF_NVTEGRA_MAP_ALIGN);
+    ctx->col_mvrw2_off   = FFALIGN(ctx->col_mvrw1_off   + col_mvrw_size,    FF_NVTEGRA_MAP_ALIGN);
+    ctx->ctx_counter_off = FFALIGN(ctx->col_mvrw2_off   + col_mvrw_size,    FF_NVTEGRA_MAP_ALIGN);
     common_map_size      = FFALIGN(ctx->ctx_counter_off + ctx_counter_size, 0x1000);
 
 #ifdef __SWITCH__
@@ -135,11 +135,11 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
 #endif
 
-    err = ff_tx1_map_create(&ctx->common_map, common_map_size, 0x100, NVMAP_CACHE_OP_INV);
+    err = ff_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100, NVMAP_CACHE_OP_INV);
     if (err < 0)
         goto fail;
 
-    mem = ff_tx1_map_get_addr(&ctx->common_map);
+    mem = ff_nvtegra_map_get_addr(&ctx->common_map);
 
     memset(mem + ctx->segment_rw1_off, 0, segment_rw_size);
     memset(mem + ctx->segment_rw2_off, 0, segment_rw_size);
@@ -156,11 +156,11 @@ static int tx1_vp9_decode_init(AVCodecContext *avctx) {
     return 0;
 
 fail:
-    tx1_vp9_decode_uninit(avctx);
+    nvtegra_vp9_decode_uninit(avctx);
     return err;
 }
 
-static void tx1_vp9_init_probs(nvdec_vp9EntropyProbs_t *probs) {
+static void nvtegra_vp9_init_probs(nvdec_vp9EntropyProbs_t *probs) {
     int i, j;
 
     for (i = 0; i < FF_ARRAY_ELEMS(probs->kf_bmode_prob); ++i) {
@@ -173,8 +173,8 @@ static void tx1_vp9_init_probs(nvdec_vp9EntropyProbs_t *probs) {
     }
 }
 
-static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
-                                 VP9Context *s, bool init)
+static void nvtegra_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
+                                     VP9Context *s, bool init)
 {
     ProbContext *p = &s->prob.p;
 
@@ -182,7 +182,7 @@ static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
 
     if (init) {
         memset(probs, 0, sizeof(nvdec_vp9EntropyProbs_t));
-        tx1_vp9_init_probs(probs);
+        nvtegra_vp9_init_probs(probs);
     }
 
     for (i = 0; i < FF_ARRAY_ELEMS(probs->ref_pred_probs); ++i)
@@ -258,7 +258,7 @@ static void tx1_vp9_update_probs(nvdec_vp9EntropyProbs_t *probs,
     }
 }
 
-static void tx1_vp9_set_tile_sizes(uint16_t *sizes, VP9Context *s) {
+static void nvtegra_vp9_set_tile_sizes(uint16_t *sizes, VP9Context *s) {
     int i, j;
 
     for (i = 0; i < s->s.h.tiling.tile_rows; ++i) {
@@ -272,8 +272,8 @@ static void tx1_vp9_set_tile_sizes(uint16_t *sizes, VP9Context *s) {
     }
 }
 
-static void tx1_vp9_update_counts(nvdec_vp9EntropyCounts_t *cts,
-                                  VP9TileData *td)
+static void nvtegra_vp9_update_counts(nvdec_vp9EntropyCounts_t *cts,
+                                      VP9TileData *td)
 {
     int i, j, k, l;
 
@@ -348,8 +348,8 @@ static void tx1_vp9_update_counts(nvdec_vp9EntropyCounts_t *cts,
     }
 }
 
-static void tx1_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecContext *avctx,
-                                        TX1VP9DecodeContext *ctx)
+static void nvtegra_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecContext *avctx,
+                                            NVTegraVP9DecodeContext *ctx)
 {
     VP9Context       *s = avctx->priv_data;
     VP9SharedContext *h = &s->s;
@@ -460,12 +460,12 @@ static void tx1_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecContext *
     ctx->prev_show_frame = !h->h.invisible;
 }
 
-static int tx1_vp9_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP9SharedContext *h,
-                                  TX1VP9DecodeContext *ctx, AVFrame *cur_frame)
+static int nvtegra_vp9_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, VP9SharedContext *h,
+                                      NVTegraVP9DecodeContext *ctx, AVFrame *cur_frame)
 {
-    FrameDecodeData *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    TX1Frame         *tf = fdd->hwaccel_priv;
-    AVTX1Map  *input_map = (AVTX1Map *)tf->input_map_ref->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    NVTegraFrame         *tf = fdd->hwaccel_priv;
+    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     uint32_t col_mvwrite_off, col_mvread_off;
     int err;
@@ -475,49 +475,49 @@ static int tx1_vp9_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP9SharedContext *h,
     else
         col_mvwrite_off = ctx->col_mvrw2_off, col_mvread_off = ctx->col_mvrw1_off;
 
-    err = ff_tx1_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
+    err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
     if (err < 0)
         return err;
 
-    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
-                      FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, VP9));
-    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                      FF_TX1_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     VP9) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
-    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
-                      FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
+                          FF_NVTEGRA_ENUM(NVC5B0_SET_APPLICATION_ID, ID, VP9));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
+                          FF_NVTEGRA_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     VP9) |
+                          FF_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1)   |
+                          FF_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
+                          FF_NVTEGRA_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
-                      input_map,        ctx->core.pic_setup_off,     NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
-                      input_map,        ctx->core.bitstream_off,     NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
-                      input_map,        ctx->core.status_off,        NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
+                          input_map,        ctx->core.pic_setup_off,     NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
+                          input_map,        ctx->core.bitstream_off,     NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
+                          input_map,        ctx->core.status_off,        NVHOST_RELOC_TYPE_DEFAULT);
 
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_PROB_TAB_BUF_OFFSET,
-                      input_map,        ctx->prob_tab_off,           NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_CTX_COUNTER_BUF_OFFSET,
-                      &ctx->common_map, ctx->ctx_counter_off,        NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_TILE_SIZE_BUF_OFFSET,
-                      &ctx->common_map, ctx->tile_sizes_off,         NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_COL_MVWRITE_BUF_OFFSET,
-                      &ctx->common_map, col_mvwrite_off,             NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_COL_MVREAD_BUF_OFFSET,
-                      &ctx->common_map, col_mvread_off,              NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_SEGMENT_READ_BUF_OFFSET,
-                      &ctx->common_map, ctx->segment_rw1_off,        NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_SEGMENT_WRITE_BUF_OFFSET,
-                      &ctx->common_map, ctx->segment_rw2_off,        NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_FILTER_BUFFER_OFFSET,
-                      &ctx->common_map, ctx->filter_off,             NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_PROB_TAB_BUF_OFFSET,
+                          input_map,        ctx->prob_tab_off,           NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_CTX_COUNTER_BUF_OFFSET,
+                          &ctx->common_map, ctx->ctx_counter_off,        NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_TILE_SIZE_BUF_OFFSET,
+                          &ctx->common_map, ctx->tile_sizes_off,         NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_COL_MVWRITE_BUF_OFFSET,
+                          &ctx->common_map, col_mvwrite_off,             NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_COL_MVREAD_BUF_OFFSET,
+                          &ctx->common_map, col_mvread_off,              NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_SEGMENT_READ_BUF_OFFSET,
+                          &ctx->common_map, ctx->segment_rw1_off,        NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_SEGMENT_WRITE_BUF_OFFSET,
+                          &ctx->common_map, ctx->segment_rw2_off,        NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_VP9_SET_FILTER_BUFFER_OFFSET,
+                          &ctx->common_map, ctx->filter_off,             NVHOST_RELOC_TYPE_DEFAULT);
 
-#define PUSH_FRAME(fr, offset) ({                                                   \
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,       \
-                      ff_tx1_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,       \
-                      ff_tx1_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
-                      NVHOST_RELOC_TYPE_DEFAULT);                                   \
+#define PUSH_FRAME(fr, offset) ({                                                           \
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,           \
+                          ff_nvtegra_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,           \
+                          ff_nvtegra_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
+                          NVHOST_RELOC_TYPE_DEFAULT);                                       \
 })
 
     PUSH_FRAME(ctx->refs[0], 0);
@@ -525,10 +525,10 @@ static int tx1_vp9_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP9SharedContext *h,
     PUSH_FRAME(ctx->refs[2], 2);
     PUSH_FRAME(cur_frame,    3);
 
-    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
-                      FF_TX1_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
+                          FF_NVTEGRA_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
 
-    err = ff_tx1_cmdbuf_end(cmdbuf);
+    err = ff_nvtegra_cmdbuf_end(cmdbuf);
     if (err < 0)
         return err;
 
@@ -538,19 +538,19 @@ static int tx1_vp9_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, VP9SharedContext *h,
     return 0;
 }
 
-static int tx1_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
-    VP9Context            *s = avctx->priv_data;
-    VP9SharedContext      *h = &s->s;
-    AVFrame           *frame = h->frames[CUR_FRAME].tf.f;
-    FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
-    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+    VP9Context                *s = avctx->priv_data;
+    VP9SharedContext          *h = &s->s;
+    AVFrame               *frame = h->frames[CUR_FRAME].tf.f;
+    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
+    NVTegraVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    TX1Frame *tf;
-    AVTX1Map *input_map;
+    NVTegraFrame *tf;
+    AVNVTegraMap *input_map;
     uint8_t *mem, *common_mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Starting VP9-TX1 frame with pixel format %s\n",
+    av_log(avctx, AV_LOG_DEBUG, "Starting VP9-NVTEGRA frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
 
     if (s->s.h.refreshctx && s->s.h.parallelmode) {
@@ -571,53 +571,53 @@ static int tx1_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32
         s->prob_ctx[s->s.h.framectxid].p = s->prob.p;
     }
 
-    err = ff_tx1_start_frame(avctx, frame, &ctx->core);
+    err = ff_nvtegra_start_frame(avctx, frame, &ctx->core);
     if (err < 0)
         return err;
 
     tf = fdd->hwaccel_priv;
-    input_map = (AVTX1Map *)tf->input_map_ref->data;
-    mem = ff_tx1_map_get_addr(input_map), common_mem = ff_tx1_map_get_addr(&ctx->common_map);
+    input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    mem = ff_nvtegra_map_get_addr(input_map), common_mem = ff_nvtegra_map_get_addr(&ctx->common_map);
 
-    tx1_vp9_prepare_frame_setup((nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
-    tx1_vp9_set_tile_sizes((uint16_t *)(common_mem + ctx->tile_sizes_off), s);
-    tx1_vp9_update_probs((nvdec_vp9EntropyProbs_t *)(mem + ctx->prob_tab_off), s, ctx->core.new_input_buffer);
+    nvtegra_vp9_prepare_frame_setup((nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
+    nvtegra_vp9_set_tile_sizes((uint16_t *)(common_mem + ctx->tile_sizes_off), s);
+    nvtegra_vp9_update_probs((nvdec_vp9EntropyProbs_t *)(mem + ctx->prob_tab_off), s, ctx->core.new_input_buffer);
 
-    ctx->refs[0] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[0]].f, h->frames[CUR_FRAME].tf.f);
-    ctx->refs[1] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[1]].f, h->frames[CUR_FRAME].tf.f);
-    ctx->refs[2] = ff_tx1_safe_get_ref(h->refs[h->h.refidx[2]].f, h->frames[CUR_FRAME].tf.f);
+    ctx->refs[0] = ff_nvtegra_safe_get_ref(h->refs[h->h.refidx[0]].f, h->frames[CUR_FRAME].tf.f);
+    ctx->refs[1] = ff_nvtegra_safe_get_ref(h->refs[h->h.refidx[1]].f, h->frames[CUR_FRAME].tf.f);
+    ctx->refs[2] = ff_nvtegra_safe_get_ref(h->refs[h->h.refidx[2]].f, h->frames[CUR_FRAME].tf.f);
 
     return 0;
 }
 
-static int tx1_vp9_end_frame(AVCodecContext *avctx) {
-    VP9Context            *s = avctx->priv_data;
-    VP9SharedContext      *h = avctx->priv_data;
-    TX1VP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame           *frame = h->frames[CUR_FRAME].tf.f;
-    FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
-    TX1Frame             *tf = fdd->hwaccel_priv;
+static int nvtegra_vp9_end_frame(AVCodecContext *avctx) {
+    VP9Context                *s = avctx->priv_data;
+    VP9SharedContext          *h = avctx->priv_data;
+    NVTegraVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    AVFrame               *frame = h->frames[CUR_FRAME].tf.f;
+    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
+    NVTegraFrame             *tf = fdd->hwaccel_priv;
 
     nvdec_vp9_pic_s *setup;
     uint8_t *mem, *common_mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending VP9-TX1 frame with %u slices -> %u bytes\n",
+    av_log(avctx, AV_LOG_DEBUG, "Ending VP9-NVTEGRA frame with %u slices -> %u bytes\n",
            ctx->core.num_slices, ctx->core.bitstream_len);
 
     if (!tf || !ctx->core.num_slices)
         return 0;
 
-    mem = ff_tx1_map_get_addr((AVTX1Map *)tf->input_map_ref->data);
+    mem = ff_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
 
     setup = (nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off);
     setup->bitstream_size = ctx->core.bitstream_len;
 
-    err = tx1_vp9_prepare_cmdbuf(&ctx->core.cmdbuf, h, ctx, frame);
+    err = nvtegra_vp9_prepare_cmdbuf(&ctx->core.cmdbuf, h, ctx, frame);
     if (err < 0)
         return err;
 
-    err = ff_tx1_end_frame(avctx, frame, &ctx->core, NULL, 0);
+    err = ff_nvtegra_end_frame(avctx, frame, &ctx->core, NULL, 0);
     if (err < 0)
         return err;
 
@@ -627,44 +627,44 @@ static int tx1_vp9_end_frame(AVCodecContext *avctx) {
      * we need to wait for the decode operation to complete.
      */
     if (!s->s.h.errorres && !s->s.h.parallelmode) {
-        err = ff_tx1_wait_decode(avctx, frame);
+        err = ff_nvtegra_wait_decode(avctx, frame);
         if (err < 0)
             return err;
 
-        common_mem = ff_tx1_map_get_addr(&ctx->common_map);
+        common_mem = ff_nvtegra_map_get_addr(&ctx->common_map);
 
-        tx1_vp9_update_counts((nvdec_vp9EntropyCounts_t *)(common_mem + ctx->ctx_counter_off),
-                              s->td);
+        nvtegra_vp9_update_counts((nvdec_vp9EntropyCounts_t *)(common_mem + ctx->ctx_counter_off),
+                                  s->td);
         ff_vp9_adapt_probs(s);
     }
 
     return 0;
 }
 
-static int tx1_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
-                                uint32_t buf_size)
+static int nvtegra_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
+                                    uint32_t buf_size)
 {
     VP9SharedContext *h = avctx->priv_data;
     AVFrame      *frame = h->frames[CUR_FRAME].tf.f;
 
     int offset = h->h.uncompressed_header_size + h->h.compressed_header_size;
 
-    return ff_tx1_decode_slice(avctx, frame, buf + offset, buf_size - offset, false);
+    return ff_nvtegra_decode_slice(avctx, frame, buf + offset, buf_size - offset, false);
 }
 
-#if CONFIG_VP9_TX1_HWACCEL
-const FFHWAccel ff_vp9_tx1_hwaccel = {
-    .p.name               = "vp9_tx1",
-    .p.type               = AVMEDIA_TYPE_VIDEO,
-    .p.id                 = AV_CODEC_ID_VP9,
-    .p.pix_fmt            = AV_PIX_FMT_TX1,
-    .start_frame          = &tx1_vp9_start_frame,
-    .end_frame            = &tx1_vp9_end_frame,
-    .decode_slice         = &tx1_vp9_decode_slice,
-    .init                 = &tx1_vp9_decode_init,
-    .uninit               = &tx1_vp9_decode_uninit,
-    .frame_params         = &ff_tx1_frame_params,
-    .priv_data_size       = sizeof(TX1VP9DecodeContext),
-    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
+#if CONFIG_VP9_NVTEGRA_HWACCEL
+const FFHWAccel ff_vp9_nvtegra_hwaccel = {
+    .p.name         = "vp9_nvtegra",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_VP9,
+    .p.pix_fmt      = AV_PIX_FMT_NVTEGRA,
+    .start_frame    = &nvtegra_vp9_start_frame,
+    .end_frame      = &nvtegra_vp9_end_frame,
+    .decode_slice   = &nvtegra_vp9_decode_slice,
+    .init           = &nvtegra_vp9_decode_init,
+    .uninit         = &nvtegra_vp9_decode_uninit,
+    .frame_params   = &ff_nvtegra_frame_params,
+    .priv_data_size = sizeof(NVTegraVP9DecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

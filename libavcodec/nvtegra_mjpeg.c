@@ -26,38 +26,38 @@
 #include "hwconfig.h"
 #include "mjpegdec.h"
 #include "decode.h"
-#include "tx1_decode.h"
+#include "nvtegra_decode.h"
 
 #include "libavutil/pixdesc.h"
-#include "libavutil/tx1_host1x.h"
+#include "libavutil/nvtegra_host1x.h"
 
-typedef struct TX1MJPEGDecodeContext {
-    TX1DecodeContext core;
-} TX1MJPEGDecodeContext;
+typedef struct NVTegraMJPEGDecodeContext {
+    NVTegraDecodeContext core;
+} NVTegraMJPEGDecodeContext;
 
-static int tx1_mjpeg_decode_uninit(AVCodecContext *avctx) {
-    TX1MJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_mjpeg_decode_uninit(AVCodecContext *avctx) {
+    NVTegraMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Deinitializing TX1 MJPEG decoder\n");
+    av_log(avctx, AV_LOG_DEBUG, "Deinitializing NVTEGRA MJPEG decoder\n");
 
-    err = ff_tx1_decode_uninit(avctx, &ctx->core);
+    err = ff_nvtegra_decode_uninit(avctx, &ctx->core);
     if (err < 0)
         return err;
 
     return 0;
 }
 
-static int tx1_mjpeg_decode_init(AVCodecContext *avctx) {
-    MJpegDecodeContext      *s = avctx->priv_data;
-    TX1MJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_mjpeg_decode_init(AVCodecContext *avctx) {
+    MJpegDecodeContext          *s = avctx->priv_data;
+    NVTegraMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
 
     enum AVPixelFormat fmt;
     int luma, err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 MJPEG decoder\n");
+    av_log(avctx, AV_LOG_DEBUG, "Initializing NVTEGRA MJPEG decoder\n");
 
     /* Reject encodes with known hardware issues */
     if (avctx->profile != AV_PROFILE_MJPEG_HUFFMAN_BASELINE_DCT) {
@@ -74,12 +74,12 @@ static int tx1_mjpeg_decode_init(AVCodecContext *avctx) {
 
     ctx->core.pic_setup_off  = 0;
     ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvjpg_dec_drv_pic_setup_s),
-                                       FF_TX1_MAP_ALIGN);
+                                       FF_NVTEGRA_MAP_ALIGN);
     ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvjpg_dec_status),
-                                       FF_TX1_MAP_ALIGN);
-    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + FF_TX1_MAP_ALIGN,
-                                       FF_TX1_MAP_ALIGN);
-    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
+                                       FF_NVTEGRA_MAP_ALIGN);
+    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + FF_NVTEGRA_MAP_ALIGN,
+                                       FF_NVTEGRA_MAP_ALIGN);
+    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_nvtegra_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
     ctx->core.max_cmdbuf_size    =  ctx->core.slice_offsets_off - ctx->core.cmdbuf_off;
@@ -87,19 +87,19 @@ static int tx1_mjpeg_decode_init(AVCodecContext *avctx) {
 
     ctx->core.is_nvjpg = true;
 
-    err = ff_tx1_decode_init(avctx, &ctx->core);
+    err = ff_nvtegra_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
     return 0;
 
 fail:
-    tx1_mjpeg_decode_uninit(avctx);
+    nvtegra_mjpeg_decode_uninit(avctx);
     return err;
 }
 
-static void tx1_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, MJpegDecodeContext *s,
-                                          TX1MJPEGDecodeContext *ctx)
+static void nvtegra_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, MJpegDecodeContext *s,
+                                              NVTegraMJPEGDecodeContext *ctx)
 {
     int input_chroma_mode, output_chroma_mode, memory_mode;
     int i, j;
@@ -185,132 +185,132 @@ static void tx1_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, MJpe
     }
 }
 
-static int tx1_mjpeg_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, MJpegDecodeContext *s, TX1MJPEGDecodeContext *ctx,
-                                    AVFrame *current_frame)
+static int nvtegra_mjpeg_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, MJpegDecodeContext *s,
+                                        NVTegraMJPEGDecodeContext *ctx, AVFrame *current_frame)
 {
-    FrameDecodeData *fdd = (FrameDecodeData *)current_frame->private_ref->data;
-    TX1Frame         *tf = fdd->hwaccel_priv;
-    AVTX1Map  *input_map = (AVTX1Map *)tf->input_map_ref->data;
+    FrameDecodeData    *fdd = (FrameDecodeData *)current_frame->private_ref->data;
+    NVTegraFrame        *tf = fdd->hwaccel_priv;
+    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int err;
 
-    err = ff_tx1_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVJPG);
+    err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVJPG);
     if (err < 0)
         return err;
 
-    FF_TX1_PUSH_VALUE(cmdbuf, NVE7D0_SET_APPLICATION_ID,
-                      FF_TX1_ENUM(NVE7D0_SET_APPLICATION_ID, ID, NVJPG_DECODER));
-    FF_TX1_PUSH_VALUE(cmdbuf, NVE7D0_SET_CONTROL_PARAMS,
-                      FF_TX1_VALUE(NVE7D0_SET_CONTROL_PARAMS, DUMP_CYCLE_COUNT, 1) |
-                      FF_TX1_VALUE(NVE7D0_SET_CONTROL_PARAMS, GPTIMER_ON,       1));
-    FF_TX1_PUSH_VALUE(cmdbuf, NVE7D0_SET_PICTURE_INDEX,
-                      FF_TX1_VALUE(NVE7D0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_APPLICATION_ID,
+                          FF_NVTEGRA_ENUM(NVE7D0_SET_APPLICATION_ID, ID, NVJPG_DECODER));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_CONTROL_PARAMS,
+                          FF_NVTEGRA_VALUE(NVE7D0_SET_CONTROL_PARAMS, DUMP_CYCLE_COUNT, 1) |
+                          FF_NVTEGRA_VALUE(NVE7D0_SET_CONTROL_PARAMS, GPTIMER_ON,       1));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_PICTURE_INDEX,
+                          FF_NVTEGRA_VALUE(NVE7D0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 
-    FF_TX1_PUSH_RELOC(cmdbuf, NVE7D0_SET_IN_DRV_PIC_SETUP,
-                      input_map, ctx->core.pic_setup_off, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVE7D0_SET_BITSTREAM,
-                      input_map, ctx->core.bitstream_off, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVE7D0_SET_OUT_STATUS,
-                      input_map, ctx->core.status_off,    NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_IN_DRV_PIC_SETUP,
+                          input_map, ctx->core.pic_setup_off, NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_BITSTREAM,
+                          input_map, ctx->core.bitstream_off, NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_OUT_STATUS,
+                          input_map, ctx->core.status_off,    NVHOST_RELOC_TYPE_DEFAULT);
 
-    FF_TX1_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC, ff_tx1_frame_get_fbuf_map(current_frame),
-                      0, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC_CHROMA_U, ff_tx1_frame_get_fbuf_map(current_frame),
-                      current_frame->data[1] - current_frame->data[0], NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC, ff_nvtegra_frame_get_fbuf_map(current_frame),
+                          0, NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC_CHROMA_U, ff_nvtegra_frame_get_fbuf_map(current_frame),
+                          current_frame->data[1] - current_frame->data[0], NVHOST_RELOC_TYPE_DEFAULT);
 
-    FF_TX1_PUSH_VALUE(cmdbuf, NVE7D0_EXECUTE,
-                      FF_TX1_ENUM(NVE7D0_EXECUTE, AWAKEN, ENABLE));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_EXECUTE,
+                          FF_NVTEGRA_ENUM(NVE7D0_EXECUTE, AWAKEN, ENABLE));
 
-    err = ff_tx1_cmdbuf_end(cmdbuf);
+    err = ff_nvtegra_cmdbuf_end(cmdbuf);
     if (err < 0)
         return err;
 
     return 0;
 }
 
-static int tx1_mjpeg_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
-    MJpegDecodeContext      *s = avctx->priv_data;
-    AVFrame             *frame = s->picture;
-    TX1MJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_mjpeg_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+    MJpegDecodeContext          *s = avctx->priv_data;
+    AVFrame                 *frame = s->picture;
+    NVTegraMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Starting MJPEG-TX1 frame with pixel format %s\n",
+    av_log(avctx, AV_LOG_DEBUG, "Starting MJPEG-NVTEGRA frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
 
-    err = ff_tx1_start_frame(avctx, frame, &ctx->core);
+    err = ff_nvtegra_start_frame(avctx, frame, &ctx->core);
     if (err < 0)
         return err;
 
     return 0;
 }
 
-static int tx1_mjpeg_end_frame(AVCodecContext *avctx) {
-    MJpegDecodeContext      *s = avctx->priv_data;
-    TX1MJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame             *frame = s->picture;
-    FrameDecodeData       *fdd = (FrameDecodeData *)frame->private_ref->data;
-    TX1Frame               *tf = fdd->hwaccel_priv;
+static int nvtegra_mjpeg_end_frame(AVCodecContext *avctx) {
+    MJpegDecodeContext          *s = avctx->priv_data;
+    NVTegraMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    AVFrame                 *frame = s->picture;
+    FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
+    NVTegraFrame               *tf = fdd->hwaccel_priv;
 
     nvjpg_dec_drv_pic_setup_s *setup;
     uint8_t *mem;
-    AVTX1Map *output_map;
+    AVNVTegraMap *output_map;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending MJPEG-TX1 frame with %u slices -> %u bytes\n",
+    av_log(avctx, AV_LOG_DEBUG, "Ending MJPEG-NVTEGRA frame with %u slices -> %u bytes\n",
            ctx->core.num_slices, ctx->core.bitstream_len);
 
     if (!tf || !ctx->core.num_slices)
         return 0;
 
-    mem = ff_tx1_map_get_addr((AVTX1Map *)tf->input_map_ref->data);
+    mem = ff_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
 
     setup = (nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off);
     setup->bitstream_offset = 0;
     setup->bitstream_size   = ctx->core.bitstream_len;
 
-    err = tx1_mjpeg_prepare_cmdbuf(&ctx->core.cmdbuf, s, ctx, frame);
+    err = nvtegra_mjpeg_prepare_cmdbuf(&ctx->core.cmdbuf, s, ctx, frame);
     if (err < 0)
         return err;
 
-    output_map = ff_tx1_frame_get_fbuf_map(frame);
+    output_map = ff_nvtegra_frame_get_fbuf_map(frame);
     output_map->is_linear = true;
 
-    return ff_tx1_end_frame(avctx, frame, &ctx->core, NULL, 0);
+    return ff_nvtegra_end_frame(avctx, frame, &ctx->core, NULL, 0);
 }
 
-static int tx1_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
-    MJpegDecodeContext      *s = avctx->priv_data;
-    TX1MJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame             *frame = s->picture;
-    FrameDecodeData       *fdd = (FrameDecodeData *)frame->private_ref->data;
+static int nvtegra_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+    MJpegDecodeContext          *s = avctx->priv_data;
+    NVTegraMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    AVFrame                 *frame = s->picture;
+    FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
 
-    TX1Frame *tf;
-    AVTX1Map *input_map;
+    NVTegraFrame *tf;
+    AVNVTegraMap *input_map;
     uint8_t *mem;
 
     tf = fdd->hwaccel_priv;
-    input_map = (AVTX1Map *)tf->input_map_ref->data;
-    mem = ff_tx1_map_get_addr(input_map);
+    input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    mem = ff_nvtegra_map_get_addr(input_map);
 
-    /* In tx1_mjpeg_start_frame the JFIF headers haven't been entirely parsed yet */
-    tx1_mjpeg_prepare_frame_setup((nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off), s, ctx);
+    /* In nvtegra_mjpeg_start_frame the JFIF headers haven't been entirely parsed yet */
+    nvtegra_mjpeg_prepare_frame_setup((nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off), s, ctx);
 
-    return ff_tx1_decode_slice(avctx, frame, buf, buf_size, false);
+    return ff_nvtegra_decode_slice(avctx, frame, buf, buf_size, false);
 }
 
-static int tx1_mjpeg_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
+static int nvtegra_mjpeg_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
     AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
 
     int err;
 
-    err = ff_tx1_frame_params(avctx, hw_frames_ctx);
+    err = ff_nvtegra_frame_params(avctx, hw_frames_ctx);
     if (err < 0)
         return err;
 
     /*
-     * NVJPG can only decode to pitch linear surfaces, which have a
-     * 256b alignment requirement in VIC
+     * NVJPG1 can only decode to pitch linear surfaces, which have a
+     * 256b alignment requirement in VIC.
      */
     frames_ctx->width  = FFALIGN(frames_ctx->width,  256);
     frames_ctx->height = FFALIGN(frames_ctx->height, 4);
@@ -318,19 +318,19 @@ static int tx1_mjpeg_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_
     return 0;
 }
 
-#if CONFIG_MJPEG_TX1_HWACCEL
-const FFHWAccel ff_mjpeg_tx1_hwaccel = {
-    .p.name               = "mjpeg_tx1",
-    .p.type               = AVMEDIA_TYPE_VIDEO,
-    .p.id                 = AV_CODEC_ID_MJPEG,
-    .p.pix_fmt            = AV_PIX_FMT_TX1,
-    .start_frame          = &tx1_mjpeg_start_frame,
-    .end_frame            = &tx1_mjpeg_end_frame,
-    .decode_slice         = &tx1_mjpeg_decode_slice,
-    .init                 = &tx1_mjpeg_decode_init,
-    .uninit               = &tx1_mjpeg_decode_uninit,
-    .frame_params         = &tx1_mjpeg_frame_params,
-    .priv_data_size       = sizeof(TX1MJPEGDecodeContext),
-    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
+#if CONFIG_MJPEG_NVTEGRA_HWACCEL
+const FFHWAccel ff_mjpeg_nvtegra_hwaccel = {
+    .p.name         = "mjpeg_nvtegra",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_MJPEG,
+    .p.pix_fmt      = AV_PIX_FMT_NVTEGRA,
+    .start_frame    = &nvtegra_mjpeg_start_frame,
+    .end_frame      = &nvtegra_mjpeg_end_frame,
+    .decode_slice   = &nvtegra_mjpeg_decode_slice,
+    .init           = &nvtegra_mjpeg_decode_init,
+    .uninit         = &nvtegra_mjpeg_decode_uninit,
+    .frame_params   = &nvtegra_mjpeg_frame_params,
+    .priv_data_size = sizeof(NVTegraMJPEGDecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

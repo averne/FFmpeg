@@ -52,9 +52,9 @@ HEADERS = adler32.h                                                     \
           hwcontext_videotoolbox.h                                      \
           hwcontext_vdpau.h                                             \
           hwcontext_vulkan.h                                            \
-          hwcontext_tx1.h                                               \
-          tx1.h                                                         \
-          tx1_host1x.h                                                  \
+          hwcontext_nvtegra.h                                           \
+          nvtegra.h                                                     \
+          nvtegra_host1x.h                                              \
           nvhost_ioctl.h                                                \
           nvmap_ioctl.h                                                 \
           iamf.h                                                        \
@@ -212,7 +212,7 @@ OBJS-$(CONFIG_VDPAU)                    += hwcontext_vdpau.o
 OBJS-$(CONFIG_VULKAN)                   += hwcontext_vulkan.o vulkan.o
 
 OBJS-$(!CONFIG_VULKAN)                  += hwcontext_stub.o
-OBJS-$(CONFIG_TX1)                      += hwcontext_tx1.o tx1.o
+OBJS-$(CONFIG_NVTEGRA)                  += hwcontext_nvtegra.o nvtegra.o
 
 OBJS += $(COMPAT_OBJS:%=../compat/%)
 
@@ -234,9 +234,9 @@ SKIPHEADERS-$(CONFIG_VDPAU)            += hwcontext_vdpau.h
 SKIPHEADERS-$(CONFIG_VULKAN)           += hwcontext_vulkan.h vulkan.h   \
                                           vulkan_functions.h            \
                                           vulkan_loader.h
-SKIPHEADERS-$(CONFIG_TX1)              += hwcontext_tx1.h               \
-                                          tx1.h                         \
-                                          tx1_host1x.h
+SKIPHEADERS-$(CONFIG_NVTEGRA)          += hwcontext_nvtegra.h           \
+                                          nvtegra.h                     \
+                                          nvtegra_host1x.h
 
 TESTPROGS = adler32                                                     \
             aes                                                         \

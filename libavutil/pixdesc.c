@@ -2791,8 +2791,8 @@ static const AVPixFmtDescriptor av_pix_fmt_descriptors[AV_PIX_FMT_NB] = {
         },
         .flags = AV_PIX_FMT_FLAG_PLANAR,
     },
-    [AV_PIX_FMT_TX1] = {
-        .name = "tx1",
+    [AV_PIX_FMT_NVTEGRA] = {
+        .name = "nvtegra",
         .flags = AV_PIX_FMT_FLAG_HWACCEL,
     },
 };

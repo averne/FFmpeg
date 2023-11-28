@@ -29,20 +29,20 @@
 #include "hwconfig.h"
 #include "h264dec.h"
 #include "decode.h"
-#include "tx1_decode.h"
+#include "nvtegra_decode.h"
 
 #include "libavutil/pixdesc.h"
-#include "libavutil/tx1_host1x.h"
+#include "libavutil/nvtegra_host1x.h"
 
-typedef struct TX1H264DecodeContext {
-    TX1DecodeContext core;
+typedef struct NVTegraH264DecodeContext {
+    NVTegraDecodeContext core;
 
-    AVTX1Map common_map;
+    AVNVTegraMap common_map;
     uint32_t coloc_off, mbhist_off, history_off;
     uint32_t mbhist_size, history_size;
 
-    struct TX1H264RefFrame {
-        AVTX1Map *map;
+    struct NVTegraH264RefFrame {
+        AVNVTegraMap *map;
         uint32_t chroma_off;
         int16_t frame_num;
         int16_t pic_id;
@@ -52,7 +52,7 @@ typedef struct TX1H264DecodeContext {
         pic_id_map[16+1], scratch_ref, cur_frame;
 
     uint64_t refs_mask, ordered_dpb_mask, pic_id_mask;
-} TX1H264DecodeContext;
+} NVTegraH264DecodeContext;
 
 /* Size (width, height) of a macroblock */
 #define MB_SIZE 16
@@ -61,31 +61,31 @@ static const uint8_t bitstream_end_sequence[16] = {
     0x00, 0x00, 0x01, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0b, 0x00, 0x00, 0x00, 0x00,
 };
 
-static int tx1_h264_decode_uninit(AVCodecContext *avctx) {
-    TX1H264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_h264_decode_uninit(AVCodecContext *avctx) {
+    NVTegraH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Deinitializing TX1 H264 decoder\n");
+    av_log(avctx, AV_LOG_DEBUG, "Deinitializing NVTEGRA H264 decoder\n");
 
-    err = ff_tx1_map_destroy(&ctx->common_map);
+    err = ff_nvtegra_map_destroy(&ctx->common_map);
     if (err < 0)
         return err;
 
-    err = ff_tx1_decode_uninit(avctx, &ctx->core);
+    err = ff_nvtegra_decode_uninit(avctx, &ctx->core);
     if (err < 0)
         return err;
 
     return 0;
 }
 
-static int tx1_h264_decode_init(AVCodecContext *avctx) {
-    H264Context            *h = avctx->priv_data;
-    const SPS            *sps = h->ps.sps;
-    TX1H264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_h264_decode_init(AVCodecContext *avctx) {
+    H264Context                *h = avctx->priv_data;
+    const SPS                *sps = h->ps.sps;
+    NVTegraH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 #ifdef __SWITCH__
-    AVHWDeviceContext *hw_device_ctx;
-    AVTX1DeviceContext *device_hwctx;
+    AVHWDeviceContext      *hw_device_ctx;
+    AVNVTegraDeviceContext *device_hwctx;
 #endif
 
     uint32_t aligned_width, aligned_height,
@@ -93,7 +93,7 @@ static int tx1_h264_decode_init(AVCodecContext *avctx) {
              coloc_size, mbhist_size, history_size, common_map_size;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Initializing TX1 H264 decoder\n");
+    av_log(avctx, AV_LOG_DEBUG, "Initializing NVTEGRA H264 decoder\n");
 
     aligned_width  = FFALIGN(avctx->coded_width,  MB_SIZE);
     aligned_height = FFALIGN(avctx->coded_height, MB_SIZE);
@@ -105,21 +105,21 @@ static int tx1_h264_decode_init(AVCodecContext *avctx) {
     /* Ignored: histogram map, size 0x400 */
     ctx->core.pic_setup_off     = 0;
     ctx->core.status_off        = FFALIGN(ctx->core.pic_setup_off     + sizeof(nvdec_h264_pic_s),
-                                          FF_TX1_MAP_ALIGN);
+                                          FF_NVTEGRA_MAP_ALIGN);
     ctx->core.cmdbuf_off        = FFALIGN(ctx->core.status_off        + sizeof(nvdec_status_s),
-                                          FF_TX1_MAP_ALIGN);
-    ctx->core.slice_offsets_off = FFALIGN(ctx->core.cmdbuf_off        + 3*FF_TX1_MAP_ALIGN,
-                                          FF_TX1_MAP_ALIGN);
+                                          FF_NVTEGRA_MAP_ALIGN);
+    ctx->core.slice_offsets_off = FFALIGN(ctx->core.cmdbuf_off        + 3*FF_NVTEGRA_MAP_ALIGN,
+                                          FF_NVTEGRA_MAP_ALIGN);
     ctx->core.bitstream_off     = FFALIGN(ctx->core.slice_offsets_off + num_slices * sizeof(uint32_t),
-                                          FF_TX1_MAP_ALIGN);
-    ctx->core.input_map_size    = FFALIGN(ctx->core.bitstream_off     + ff_tx1_decode_pick_bitstream_buffer_size(avctx),
+                                          FF_NVTEGRA_MAP_ALIGN);
+    ctx->core.input_map_size    = FFALIGN(ctx->core.bitstream_off     + ff_nvtegra_decode_pick_bitstream_buffer_size(avctx),
                                           0x1000);
 
     ctx->core.max_cmdbuf_size    =  ctx->core.slice_offsets_off - ctx->core.cmdbuf_off;
     ctx->core.max_num_slices     = (ctx->core.bitstream_off     - ctx->core.slice_offsets_off) / sizeof(uint32_t);
     ctx->core.max_bitstream_size =  ctx->core.input_map_size    - ctx->core.bitstream_off;
 
-    err = ff_tx1_decode_init(avctx, &ctx->core);
+    err = ff_nvtegra_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
@@ -129,8 +129,8 @@ static int tx1_h264_decode_init(AVCodecContext *avctx) {
     history_size = FFALIGN(width_in_mbs * 0x200 + 0x1100, 0x200);
 
     ctx->coloc_off   = 0;
-    ctx->mbhist_off  = FFALIGN(ctx->coloc_off   + coloc_size,   FF_TX1_MAP_ALIGN);
-    ctx->history_off = FFALIGN(ctx->mbhist_off  + mbhist_size,  FF_TX1_MAP_ALIGN);
+    ctx->mbhist_off  = FFALIGN(ctx->coloc_off   + coloc_size,   FF_NVTEGRA_MAP_ALIGN);
+    ctx->history_off = FFALIGN(ctx->mbhist_off  + mbhist_size,  FF_NVTEGRA_MAP_ALIGN);
     common_map_size  = FFALIGN(ctx->history_off + history_size, 0x1000);
 
 #ifdef __SWITCH__
@@ -140,7 +140,7 @@ static int tx1_h264_decode_init(AVCodecContext *avctx) {
     ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
 #endif
 
-    err = ff_tx1_map_create(&ctx->common_map, common_map_size, 0x100, NVMAP_CACHE_OP_INV);
+    err = ff_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100, NVMAP_CACHE_OP_INV);
     if (err < 0)
         goto fail;
 
@@ -153,7 +153,7 @@ static int tx1_h264_decode_init(AVCodecContext *avctx) {
     return 0;
 
 fail:
-    tx1_h264_decode_uninit(avctx);
+    nvtegra_h264_decode_uninit(avctx);
     return err;
 }
 
@@ -194,8 +194,8 @@ static inline int find_slot(uint64_t *mask) {
     return slot;
 }
 
-static void tx1_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h,
-                                         TX1H264DecodeContext *ctx)
+static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h,
+                                             NVTegraH264DecodeContext *ctx)
 {
     const PPS *pps = h->ps.pps;
     const SPS *sps = h->ps.sps;
@@ -282,7 +282,7 @@ static void tx1_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h
             continue;
 
         for (j = 0; j < dpb_size; ++j) {
-            if (ff_tx1_frame_get_fbuf_map(refs[j]->f) == ctx->refs[i].map)
+            if (ff_nvtegra_frame_get_fbuf_map(refs[j]->f) == ctx->refs[i].map)
                 break;
         }
 
@@ -322,15 +322,15 @@ static void tx1_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h
     }
 
     /* In the case of interlaced video, the new frame can be the same as the last */
-    if (ctx->refs[ctx->cur_frame].map != ff_tx1_frame_get_fbuf_map(h->cur_pic_ptr->f)) {
+    if (ctx->refs[ctx->cur_frame].map != ff_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f)) {
         /* Allocate a pic id for the current frame */
         i = find_slot(&ctx->pic_id_mask);
 
         /* Insert it in our ref list */
         ctx->cur_frame = find_slot(&ctx->refs_mask);
         ctx->pic_id_map[i] = ctx->cur_frame;
-        ctx->refs[ctx->cur_frame] = (struct TX1H264RefFrame){
-            .map        = ff_tx1_frame_get_fbuf_map(h->cur_pic_ptr->f),
+        ctx->refs[ctx->cur_frame] = (struct NVTegraH264RefFrame){
+            .map        = ff_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f),
             .chroma_off = h->cur_pic_ptr->f->data[1] - h->cur_pic_ptr->f->data[0],
             .frame_num  = h->cur_pic_ptr->frame_num,
             .pic_id     = i,
@@ -362,49 +362,49 @@ static void tx1_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h
     memcpy(setup->WeightScale8x8[1], pps->scaling_matrix8[3], sizeof(setup->WeightScale8x8[1]));
 }
 
-static int tx1_h264_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, H264Context *h,
-                                   AVFrame *cur_frame, TX1H264DecodeContext *ctx)
+static int nvtegra_h264_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, H264Context *h,
+                                       AVFrame *cur_frame, NVTegraH264DecodeContext *ctx)
 {
-    FrameDecodeData *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    TX1Frame         *tf = fdd->hwaccel_priv;
-    AVTX1Map  *input_map = (AVTX1Map *)tf->input_map_ref->data;
+    FrameDecodeData    *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    NVTegraFrame        *tf = fdd->hwaccel_priv;
+    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int err, i;
 
-    err = ff_tx1_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
+    err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
     if (err < 0)
         return err;
 
-    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
-                      FF_TX1_ENUM(NVC5B0_SET_APPLICATION_ID, ID, H264));
-    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                      FF_TX1_ENUM (NVC5B0_SET_CONTROL_PARAMS,  CODEC_TYPE,    H264) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1) |
-                      FF_TX1_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
-    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
-                      FF_TX1_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
+                          FF_NVTEGRA_ENUM(NVC5B0_SET_APPLICATION_ID, ID, H264));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
+                          FF_NVTEGRA_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     H264) |
+                          FF_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1)    |
+                          FF_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
+                          FF_NVTEGRA_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
-                      input_map,        ctx->core.pic_setup_off,     NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
-                      input_map,        ctx->core.bitstream_off,     NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_SLICE_OFFSETS_BUF_OFFSET,
-                      input_map,        ctx->core.slice_offsets_off, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
-                      input_map,        ctx->core.status_off,        NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
+                          input_map,        ctx->core.pic_setup_off,     NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
+                          input_map,        ctx->core.bitstream_off,     NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_SLICE_OFFSETS_BUF_OFFSET,
+                          input_map,        ctx->core.slice_offsets_off, NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
+                          input_map,        ctx->core.status_off,        NVHOST_RELOC_TYPE_DEFAULT);
 
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_COLOC_DATA_OFFSET,
-                      &ctx->common_map, ctx->coloc_off,              NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_H264_SET_MBHIST_BUF_OFFSET,
-                      &ctx->common_map, ctx->mbhist_off,             NVHOST_RELOC_TYPE_DEFAULT);
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_HISTORY_OFFSET,
-                      &ctx->common_map, ctx->history_off,            NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_COLOC_DATA_OFFSET,
+                          &ctx->common_map, ctx->coloc_off,              NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_H264_SET_MBHIST_BUF_OFFSET,
+                          &ctx->common_map, ctx->mbhist_off,             NVHOST_RELOC_TYPE_DEFAULT);
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_HISTORY_OFFSET,
+                          &ctx->common_map, ctx->history_off,            NVHOST_RELOC_TYPE_DEFAULT);
 
-#define PUSH_FRAME(ref, offset) ({                                              \
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,   \
-                      ref.map, 0, NVHOST_RELOC_TYPE_DEFAULT);                   \
-    FF_TX1_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,   \
-                      ref.map, ref.chroma_off, NVHOST_RELOC_TYPE_DEFAULT);      \
+#define PUSH_FRAME(ref, offset) ({                                                \
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4, \
+                          ref.map, 0, NVHOST_RELOC_TYPE_DEFAULT);                 \
+    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4, \
+                          ref.map, ref.chroma_off, NVHOST_RELOC_TYPE_DEFAULT);    \
 })
 
     for (i = 0; i < 16 + 1; ++i) {
@@ -416,96 +416,96 @@ static int tx1_h264_prepare_cmdbuf(AVTX1Cmdbuf *cmdbuf, H264Context *h,
             PUSH_FRAME(ctx->refs[ctx->scratch_ref], i);
     }
 
-    FF_TX1_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
-                      FF_TX1_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
+    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
+                          FF_NVTEGRA_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
 
-    err = ff_tx1_cmdbuf_end(cmdbuf);
+    err = ff_nvtegra_cmdbuf_end(cmdbuf);
     if (err < 0)
         return err;
 
     return 0;
 }
 
-static int tx1_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
-    H264Context            *h = avctx->priv_data;
-    AVFrame            *frame = h->cur_pic_ptr->f;
-    FrameDecodeData      *fdd = (FrameDecodeData *)frame->private_ref->data;
-    TX1H264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+static int nvtegra_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+    H264Context                *h = avctx->priv_data;
+    AVFrame                *frame = h->cur_pic_ptr->f;
+    FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
+    NVTegraH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    TX1Frame *tf;
-    AVTX1Map *input_map;
+    NVTegraFrame *tf;
+    AVNVTegraMap *input_map;
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Starting H264-TX1 frame with pixel format %s\n",
+    av_log(avctx, AV_LOG_DEBUG, "Starting H264-NVTEGRA frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
 
-    err = ff_tx1_start_frame(avctx, frame, &ctx->core);
+    err = ff_nvtegra_start_frame(avctx, frame, &ctx->core);
     if (err < 0)
         return err;
 
     tf = fdd->hwaccel_priv;
-    input_map = (AVTX1Map *)tf->input_map_ref->data;
-    mem = ff_tx1_map_get_addr(input_map);
+    input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    mem = ff_nvtegra_map_get_addr(input_map);
 
-    tx1_h264_prepare_frame_setup((nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
+    nvtegra_h264_prepare_frame_setup((nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
 
     return 0;
 }
 
-static int tx1_h264_end_frame(AVCodecContext *avctx) {
-    H264Context            *h = avctx->priv_data;
-    TX1H264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame            *frame = h->cur_pic_ptr->f;
-    FrameDecodeData      *fdd = (FrameDecodeData *)frame->private_ref->data;
-    TX1Frame              *tf = fdd->hwaccel_priv;
+static int nvtegra_h264_end_frame(AVCodecContext *avctx) {
+    H264Context                *h = avctx->priv_data;
+    NVTegraH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    AVFrame                *frame = h->cur_pic_ptr->f;
+    FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
+    NVTegraFrame              *tf = fdd->hwaccel_priv;
 
     nvdec_h264_pic_s *setup;
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending H264-TX1 frame with %u slices -> %u bytes\n",
+    av_log(avctx, AV_LOG_DEBUG, "Ending H264-NVTEGRA frame with %u slices -> %u bytes\n",
            ctx->core.num_slices, ctx->core.bitstream_len);
 
     if (!tf || !ctx->core.num_slices)
         return 0;
 
-    mem = ff_tx1_map_get_addr((AVTX1Map *)tf->input_map_ref->data);
+    mem = ff_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
 
     setup = (nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off);
     setup->stream_len  = ctx->core.bitstream_len + sizeof(bitstream_end_sequence);
     setup->slice_count = ctx->core.num_slices;
 
-    err = tx1_h264_prepare_cmdbuf(&ctx->core.cmdbuf, h, frame, ctx);
+    err = nvtegra_h264_prepare_cmdbuf(&ctx->core.cmdbuf, h, frame, ctx);
     if (err < 0)
         return err;
 
-    return ff_tx1_end_frame(avctx, frame, &ctx->core, bitstream_end_sequence,
-                            sizeof(bitstream_end_sequence));
+    return ff_nvtegra_end_frame(avctx, frame, &ctx->core, bitstream_end_sequence,
+                                sizeof(bitstream_end_sequence));
 }
 
-static int tx1_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
-                                 uint32_t buf_size)
+static int nvtegra_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
+                                     uint32_t buf_size)
 {
     H264Context *h = avctx->priv_data;
     AVFrame *frame = h->cur_pic_ptr->f;
 
-    return ff_tx1_decode_slice(avctx, frame, buf, buf_size, true);
+    return ff_nvtegra_decode_slice(avctx, frame, buf, buf_size, true);
 }
 
-#if CONFIG_H264_TX1_HWACCEL
-const FFHWAccel ff_h264_tx1_hwaccel = {
-    .p.name               = "h264_tx1",
-    .p.type               = AVMEDIA_TYPE_VIDEO,
-    .p.id                 = AV_CODEC_ID_H264,
-    .p.pix_fmt            = AV_PIX_FMT_TX1,
-    .start_frame          = &tx1_h264_start_frame,
-    .end_frame            = &tx1_h264_end_frame,
-    .decode_slice         = &tx1_h264_decode_slice,
-    .init                 = &tx1_h264_decode_init,
-    .uninit               = &tx1_h264_decode_uninit,
-    .frame_params         = &ff_tx1_frame_params,
-    .priv_data_size       = sizeof(TX1H264DecodeContext),
-    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
+#if CONFIG_H264_NVTEGRA_HWACCEL
+const FFHWAccel ff_h264_nvtegra_hwaccel = {
+    .p.name         = "h264_nvtegra",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_H264,
+    .p.pix_fmt      = AV_PIX_FMT_NVTEGRA,
+    .start_frame    = &nvtegra_h264_start_frame,
+    .end_frame      = &nvtegra_h264_end_frame,
+    .decode_slice   = &nvtegra_h264_decode_slice,
+    .init           = &nvtegra_h264_decode_init,
+    .uninit         = &nvtegra_h264_decode_uninit,
+    .frame_params   = &ff_nvtegra_frame_params,
+    .priv_data_size = sizeof(NVTegraH264DecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

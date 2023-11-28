@@ -36,15 +36,15 @@
 
 #include "nvhost_ioctl.h"
 #include "nvmap_ioctl.h"
-#include "tx1_host1x.h"
+#include "nvtegra_host1x.h"
 
-#include "tx1.h"
+#include "nvtegra.h"
 
 #ifndef __SWITCH__
 extern int g_nvmap_fd, g_nvhost_fd;
 #endif
 
-int ff_tx1_channel_open(AVTX1Channel *channel, const char *dev) {
+int ff_nvtegra_channel_open(AVNVTegraChannel *channel, const char *dev) {
     int err;
 #ifndef __SWITCH__
     struct nvhost_get_param_arg args;
@@ -85,7 +85,7 @@ fail:
 #endif
 }
 
-int ff_tx1_channel_close(AVTX1Channel *channel) {
+int ff_nvtegra_channel_close(AVNVTegraChannel *channel) {
 #ifndef __SWITCH__
     if (!channel->fd)
         return 0;
@@ -97,7 +97,7 @@ int ff_tx1_channel_close(AVTX1Channel *channel) {
 #endif
 }
 
-int ff_tx1_channel_get_clock_rate(AVTX1Channel *channel, uint32_t moduleid, uint32_t *clock_rate) {
+int ff_nvtegra_channel_get_clock_rate(AVNVTegraChannel *channel, uint32_t moduleid, uint32_t *clock_rate) {
     struct nvhost_clk_rate_args args;
     int err;
 
@@ -121,7 +121,7 @@ int ff_tx1_channel_get_clock_rate(AVTX1Channel *channel, uint32_t moduleid, uint
     return 0;
 }
 
-int ff_tx1_channel_set_clock_rate(AVTX1Channel *channel, uint32_t moduleid, uint32_t clock_rate) {
+int ff_nvtegra_channel_set_clock_rate(AVNVTegraChannel *channel, uint32_t moduleid, uint32_t clock_rate) {
     struct nvhost_clk_rate_args args;
 
     args = (struct nvhost_clk_rate_args){
@@ -140,7 +140,7 @@ int ff_tx1_channel_set_clock_rate(AVTX1Channel *channel, uint32_t moduleid, uint
 #endif
 }
 
-int ff_tx1_channel_submit(AVTX1Channel *channel, AVTX1Cmdbuf *cmdbuf, uint32_t *fence) {
+int ff_nvtegra_channel_submit(AVNVTegraChannel *channel, AVNVTegraCmdbuf *cmdbuf, uint32_t *fence) {
     int err;
 #ifndef __SWITCH__
     struct nvhost_submit_args args;
@@ -193,7 +193,7 @@ int ff_tx1_channel_submit(AVTX1Channel *channel, AVTX1Cmdbuf *cmdbuf, uint32_t *
 #endif
 }
 
-int ff_tx1_channel_set_submit_timeout(AVTX1Channel *channel, uint32_t timeout_ms) {
+int ff_nvtegra_channel_set_submit_timeout(AVNVTegraChannel *channel, uint32_t timeout_ms) {
     struct nvhost_set_timeout_args args;
 
     args = (struct nvhost_set_timeout_args){
@@ -207,7 +207,7 @@ int ff_tx1_channel_set_submit_timeout(AVTX1Channel *channel, uint32_t timeout_ms
 #endif
 }
 
-int ff_tx1_syncpt_wait(AVTX1Channel *channel, uint32_t threshold, int32_t timeout) {
+int ff_nvtegra_syncpt_wait(AVNVTegraChannel *channel, uint32_t threshold, int32_t timeout) {
 #ifndef __SWITCH__
     struct nvhost_ctrl_syncpt_waitex_args args = {
         .id      = channel->syncpt,
@@ -237,7 +237,7 @@ static bool convert_cache_op(void *mem, size_t size, uint32_t flags) {
 }
 #endif
 
-int ff_tx1_map_allocate(AVTX1Map *map, uint32_t size, uint32_t align, uint32_t flags) {
+int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, uint32_t flags) {
 #ifndef __SWITCH__
     struct nvmap_create_handle create_args;
     struct nvmap_alloc_handle alloc_args;
@@ -268,7 +268,7 @@ int ff_tx1_map_allocate(AVTX1Map *map, uint32_t size, uint32_t align, uint32_t f
     return 0;
 
 fail:
-    ff_tx1_map_free(map);
+    ff_nvtegra_map_free(map);
     return AVERROR(errno);
 #else
     void *mem;
@@ -284,7 +284,7 @@ fail:
 #endif
 }
 
-int ff_tx1_map_free(AVTX1Map *map) {
+int ff_nvtegra_map_free(AVNVTegraMap *map) {
 #ifndef __SWITCH__
     int err;
 
@@ -310,7 +310,7 @@ int ff_tx1_map_free(AVTX1Map *map) {
 #endif
 }
 
-int ff_tx1_map_from_va(AVTX1Map *map, void *mem, uint32_t size, uint32_t align, uint32_t flags) {
+int ff_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t align, uint32_t flags) {
 #ifndef __SWITCH__
     struct nvmap_create_handle_from_va args;
     int err;
@@ -336,16 +336,16 @@ int ff_tx1_map_from_va(AVTX1Map *map, void *mem, uint32_t size, uint32_t align, 
 #endif
 }
 
-int ff_tx1_map_close(AVTX1Map *map) {
+int ff_nvtegra_map_close(AVNVTegraMap *map) {
 #ifndef __SWITCH__
-    return ff_tx1_map_free(map);
+    return ff_nvtegra_map_free(map);
 #else
     nvMapClose(&map->map);
     return 0;
 #endif
 }
 
-int ff_tx1_map_map(AVTX1Map *map) {
+int ff_nvtegra_map_map(AVNVTegraMap *map) {
 #ifndef __SWITCH__
     void *addr;
 
@@ -374,7 +374,7 @@ int ff_tx1_map_map(AVTX1Map *map) {
 #endif
 }
 
-int ff_tx1_map_unmap(AVTX1Map *map) {
+int ff_nvtegra_map_unmap(AVNVTegraMap *map) {
     int err;
 #ifndef __SWITCH__
     if (!map->cpu_addr)
@@ -408,24 +408,24 @@ int ff_tx1_map_unmap(AVTX1Map *map) {
 #endif
 }
 
-int ff_tx1_map_realloc(AVTX1Map *map, uint32_t size, uint32_t align, uint32_t flags) {
-    AVTX1Map tmp = {0};
+int ff_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align, uint32_t flags) {
+    AVNVTegraMap tmp = {0};
     int err;
 
-    if (ff_tx1_map_get_size(map) >= size)
+    if (ff_nvtegra_map_get_size(map) >= size)
         return 0;
 
 #ifdef __SWITCH__
     tmp.owner = map->owner;
 #endif
 
-    err = ff_tx1_map_create(&tmp, size, align, flags);
+    err = ff_nvtegra_map_create(&tmp, size, align, flags);
     if (err < 0)
         goto fail;
 
-    memcpy(ff_tx1_map_get_addr(&tmp), ff_tx1_map_get_addr(map), ff_tx1_map_get_size(map));
+    memcpy(ff_nvtegra_map_get_addr(&tmp), ff_nvtegra_map_get_addr(map), ff_nvtegra_map_get_size(map));
 
-    err = ff_tx1_map_destroy(map);
+    err = ff_nvtegra_map_destroy(map);
     if (err < 0)
         goto fail;
 
@@ -434,11 +434,11 @@ int ff_tx1_map_realloc(AVTX1Map *map, uint32_t size, uint32_t align, uint32_t fl
     return 0;
 
 fail:
-    ff_tx1_map_destroy(&tmp);
+    ff_nvtegra_map_destroy(&tmp);
     return err;
 }
 
-int ff_tx1_cmdbuf_init(AVTX1Cmdbuf *cmdbuf) {
+int ff_nvtegra_cmdbuf_init(AVNVTegraCmdbuf *cmdbuf) {
     cmdbuf->num_cmdbufs      = 0;
 #ifndef __SWITCH__
     cmdbuf->num_relocs       = 0;
@@ -486,7 +486,7 @@ int ff_tx1_cmdbuf_init(AVTX1Cmdbuf *cmdbuf) {
     return 0;
 }
 
-int ff_tx1_cmdbuf_deinit(AVTX1Cmdbuf *cmdbuf) {
+int ff_nvtegra_cmdbuf_deinit(AVNVTegraCmdbuf *cmdbuf) {
     av_freep(&cmdbuf->cmdbufs);
     av_freep(&cmdbuf->syncpt_incrs);
 
@@ -499,10 +499,10 @@ int ff_tx1_cmdbuf_deinit(AVTX1Cmdbuf *cmdbuf) {
     return 0;
 }
 
-int ff_tx1_cmdbuf_add_memory(AVTX1Cmdbuf *cmdbuf, AVTX1Map *map, uint32_t offset, uint32_t size) {
+int ff_nvtegra_cmdbuf_add_memory(AVNVTegraCmdbuf *cmdbuf, AVNVTegraMap *map, uint32_t offset, uint32_t size) {
     uint8_t *mem;
 
-    mem = ff_tx1_map_get_addr(map);
+    mem = ff_nvtegra_map_get_addr(map);
 
     cmdbuf->map        = map;
     cmdbuf->mem_offset = offset;
@@ -513,10 +513,10 @@ int ff_tx1_cmdbuf_add_memory(AVTX1Cmdbuf *cmdbuf, AVTX1Map *map, uint32_t offset
     return 0;
 }
 
-int ff_tx1_cmdbuf_clear(AVTX1Cmdbuf *cmdbuf) {
+int ff_nvtegra_cmdbuf_clear(AVNVTegraCmdbuf *cmdbuf) {
     uint8_t *mem;
 
-    mem = ff_tx1_map_get_addr(cmdbuf->map);
+    mem = ff_nvtegra_map_get_addr(cmdbuf->map);
 
     cmdbuf->num_cmdbufs = 0, cmdbuf->num_syncpt_incrs = 0;
 #ifndef __SWITCH__
@@ -527,14 +527,14 @@ int ff_tx1_cmdbuf_clear(AVTX1Cmdbuf *cmdbuf) {
     return 0;
 }
 
-int ff_tx1_cmdbuf_begin(AVTX1Cmdbuf *cmdbuf, uint32_t class_id) {
+int ff_nvtegra_cmdbuf_begin(AVNVTegraCmdbuf *cmdbuf, uint32_t class_id) {
     uint8_t *mem;
     void *tmp1;
 #ifndef __SWITCH__
     void *tmp2, *tmp3;
 #endif
 
-    mem = ff_tx1_map_get_addr(cmdbuf->map);
+    mem = ff_nvtegra_map_get_addr(cmdbuf->map);
 
     tmp1 = av_realloc_array(cmdbuf->cmdbufs,     cmdbuf->num_cmdbufs + 1, sizeof(*cmdbuf->cmdbufs));
 #ifndef __SWITCH__
@@ -556,7 +556,7 @@ int ff_tx1_cmdbuf_begin(AVTX1Cmdbuf *cmdbuf, uint32_t class_id) {
 #endif
 
     cmdbuf->cmdbufs[cmdbuf->num_cmdbufs] = (struct nvhost_cmdbuf){
-        .mem       = ff_tx1_map_get_handle(cmdbuf->map),
+        .mem       = ff_nvtegra_map_get_handle(cmdbuf->map),
         .offset    = (uint8_t *)cmdbuf->cur_word - mem,
     };
 
@@ -570,19 +570,19 @@ int ff_tx1_cmdbuf_begin(AVTX1Cmdbuf *cmdbuf, uint32_t class_id) {
 
 #ifdef __SWITCH__
     if (cmdbuf->num_cmdbufs == 0)
-        ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_setclass(class_id, 0, 0));
+        ff_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_setclass(class_id, 0, 0));
 #endif
 
     return 0;
 }
 
-int ff_tx1_cmdbuf_end(AVTX1Cmdbuf *cmdbuf) {
+int ff_nvtegra_cmdbuf_end(AVNVTegraCmdbuf *cmdbuf) {
     cmdbuf->num_cmdbufs++;
     return 0;
 }
 
-int ff_tx1_cmdbuf_push_word(AVTX1Cmdbuf *cmdbuf, uint32_t word) {
-    uintptr_t mem_start = (uintptr_t)ff_tx1_map_get_addr(cmdbuf->map) + cmdbuf->mem_offset;
+int ff_nvtegra_cmdbuf_push_word(AVNVTegraCmdbuf *cmdbuf, uint32_t word) {
+    uintptr_t mem_start = (uintptr_t)ff_nvtegra_map_get_addr(cmdbuf->map) + cmdbuf->mem_offset;
 
     if ((uintptr_t)cmdbuf->cur_word - mem_start >= cmdbuf->mem_size)
         return AVERROR(ENOMEM);
@@ -592,33 +592,33 @@ int ff_tx1_cmdbuf_push_word(AVTX1Cmdbuf *cmdbuf, uint32_t word) {
     return 0;
 }
 
-int ff_tx1_cmdbuf_push_value(AVTX1Cmdbuf *cmdbuf, uint32_t offset, uint32_t word) {
+int ff_nvtegra_cmdbuf_push_value(AVNVTegraCmdbuf *cmdbuf, uint32_t offset, uint32_t word) {
     int err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_incr(NV_THI_METHOD0/4, 2));
+    err = ff_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_incr(NV_THI_METHOD0/4, 2));
     if (err < 0)
         return err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, offset);
+    err = ff_nvtegra_cmdbuf_push_word(cmdbuf, offset);
     if (err < 0)
         return err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, word);
+    err = ff_nvtegra_cmdbuf_push_word(cmdbuf, word);
     if (err < 0)
         return err;
 
     return 0;
 }
 
-int ff_tx1_cmdbuf_push_reloc(AVTX1Cmdbuf *cmdbuf, uint32_t offset, AVTX1Map *target, uint32_t target_offset,
-                             int reloc_type, int shift)
+int ff_nvtegra_cmdbuf_push_reloc(AVNVTegraCmdbuf *cmdbuf, uint32_t offset, AVNVTegraMap *target, uint32_t target_offset,
+                                 int reloc_type, int shift)
 {
     int err;
 #ifndef __SWITCH__
     uint8_t *mem;
     void *tmp1, *tmp2, *tmp3;
 
-    mem = ff_tx1_map_get_addr(cmdbuf->map);
+    mem = ff_nvtegra_map_get_addr(cmdbuf->map);
 
     tmp1 = av_realloc_array(cmdbuf->relocs,       cmdbuf->num_relocs + 1, sizeof(*cmdbuf->relocs));
     tmp2 = av_realloc_array(cmdbuf->reloc_types,  cmdbuf->num_relocs + 1, sizeof(*cmdbuf->reloc_types));
@@ -628,14 +628,14 @@ int ff_tx1_cmdbuf_push_reloc(AVTX1Cmdbuf *cmdbuf, uint32_t offset, AVTX1Map *tar
 
     cmdbuf->relocs = tmp1, cmdbuf->reloc_types = tmp2, cmdbuf->reloc_shifts = tmp3;
 
-    err = ff_tx1_cmdbuf_push_value(cmdbuf, offset, 0xdeadbeef);
+    err = ff_nvtegra_cmdbuf_push_value(cmdbuf, offset, 0xdeadbeef);
     if (err < 0)
         return err;
 
     cmdbuf->relocs[cmdbuf->num_relocs]       = (struct nvhost_reloc){
-        .cmdbuf_mem    = ff_tx1_map_get_handle(cmdbuf->map),
+        .cmdbuf_mem    = ff_nvtegra_map_get_handle(cmdbuf->map),
         .cmdbuf_offset = (uint8_t *)cmdbuf->cur_word - mem - sizeof(uint32_t),
-        .target        = ff_tx1_map_get_handle(target),
+        .target        = ff_nvtegra_map_get_handle(target),
         .target_offset = target_offset,
     };
 
@@ -651,7 +651,7 @@ int ff_tx1_cmdbuf_push_reloc(AVTX1Cmdbuf *cmdbuf, uint32_t offset, AVTX1Map *tar
 
     return 0;
 #else
-    err = ff_tx1_cmdbuf_push_value(cmdbuf, offset, (target->iova + target_offset) >> shift);
+    err = ff_nvtegra_cmdbuf_push_value(cmdbuf, offset, (target->iova + target_offset) >> shift);
     if (err < 0)
         return err;
 
@@ -659,32 +659,32 @@ int ff_tx1_cmdbuf_push_reloc(AVTX1Cmdbuf *cmdbuf, uint32_t offset, AVTX1Map *tar
 #endif
 }
 
-int ff_tx1_cmdbuf_push_wait(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence) {
+int ff_nvtegra_cmdbuf_push_wait(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence) {
     int err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_setclass(HOST1X_CLASS_HOST1X, 0, 0));
+    err = ff_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_setclass(HOST1X_CLASS_HOST1X, 0, 0));
     if (err < 0)
         return err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, host1x_opcode_mask(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD,
-                                  (1<<(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD - NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD)) |
-                                  (1<<(NV_CLASS_HOST_WAIT_SYNCPT         - NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD))));
+    err = ff_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_mask(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD,
+                                      (1<<(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD - NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD)) |
+                                      (1<<(NV_CLASS_HOST_WAIT_SYNCPT         - NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD))));
     if (err < 0)
         return err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, fence);
+    err = ff_nvtegra_cmdbuf_push_word(cmdbuf, fence);
     if (err < 0)
         return err;
 
-    err = ff_tx1_cmdbuf_push_word(cmdbuf, syncpt);
+    err = ff_nvtegra_cmdbuf_push_word(cmdbuf, syncpt);
     if (err < 0)
         return err;
 
     return 0;
 }
 
-int ff_tx1_cmdbuf_add_syncpt_incr(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt,
-                                  uint32_t num_incrs, uint32_t fence)
+int ff_nvtegra_cmdbuf_add_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt,
+                                      uint32_t num_incrs, uint32_t fence)
 {
     void *tmp1;
 #ifndef __SWITCH__
@@ -722,13 +722,13 @@ int ff_tx1_cmdbuf_add_syncpt_incr(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt,
     return 0;
 }
 
-int ff_tx1_cmdbuf_add_waitchk(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence) {
+int ff_nvtegra_cmdbuf_add_waitchk(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence) {
 #ifndef __SWITCH__
     uint8_t *mem;
     void *tmp;
     int err;
 
-    mem = ff_tx1_map_get_addr(cmdbuf->map);
+    mem = ff_nvtegra_map_get_addr(cmdbuf->map);
 
     tmp = av_realloc_array(cmdbuf->waitchks, cmdbuf->num_waitchks + 1, sizeof(*cmdbuf->waitchks));
     if (!tmp)
@@ -737,7 +737,7 @@ int ff_tx1_cmdbuf_add_waitchk(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t fen
     cmdbuf->waitchks = tmp;
 
     cmdbuf->waitchks[cmdbuf->num_waitchks] = (struct nvhost_waitchk){
-        .mem       = ff_tx1_map_get_handle(cmdbuf->map),
+        .mem       = ff_nvtegra_map_get_handle(cmdbuf->map),
         .offset    = (uint8_t *)cmdbuf->cur_word - mem - sizeof(uint32_t),
         .syncpt_id = syncpt,
         .thresh    = fence,
@@ -746,5 +746,5 @@ int ff_tx1_cmdbuf_add_waitchk(AVTX1Cmdbuf *cmdbuf, uint32_t syncpt, uint32_t fen
     cmdbuf->num_waitchks++;
 #endif
 
-    return ff_tx1_cmdbuf_push_wait(cmdbuf, syncpt, fence);
+    return ff_nvtegra_cmdbuf_push_wait(cmdbuf, syncpt, fence);
 }

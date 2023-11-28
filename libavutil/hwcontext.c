@@ -66,8 +66,8 @@ static const HWContextType * const hw_table[] = {
 #if CONFIG_VULKAN
     &ff_hwcontext_type_vulkan,
 #endif
-#if CONFIG_TX1
-    &ff_hwcontext_type_tx1,
+#if CONFIG_NVTEGRA
+    &ff_hwcontext_type_nvtegra,
 #endif
     NULL,
 };
@@ -85,7 +85,7 @@ static const char *const hw_type_names[] = {
     [AV_HWDEVICE_TYPE_VIDEOTOOLBOX] = "videotoolbox",
     [AV_HWDEVICE_TYPE_MEDIACODEC] = "mediacodec",
     [AV_HWDEVICE_TYPE_VULKAN] = "vulkan",
-    [AV_HWDEVICE_TYPE_TX1]    = "tx1",
+    [AV_HWDEVICE_TYPE_NVTEGRA] = "nvtegra",
 };
 
 typedef struct FFHWDeviceContext {

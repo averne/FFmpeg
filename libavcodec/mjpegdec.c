@@ -734,8 +734,8 @@ int ff_mjpeg_decode_sof(MJpegDecodeContext *s)
 #if CONFIG_MJPEG_VAAPI_HWACCEL
                 AV_PIX_FMT_VAAPI,
 #endif
-#if CONFIG_MJPEG_TX1_HWACCEL
-                AV_PIX_FMT_TX1,
+#if CONFIG_MJPEG_NVTEGRA_HWACCEL
+                AV_PIX_FMT_NVTEGRA,
 #endif
                 s->avctx->pix_fmt,
                 AV_PIX_FMT_NONE,
@@ -3023,8 +3023,8 @@ const FFCodec ff_mjpeg_decoder = {
 #if CONFIG_MJPEG_VAAPI_HWACCEL
                         HWACCEL_VAAPI(mjpeg),
 #endif
-#if CONFIG_MJPEG_TX1_HWACCEL
-                        HWACCEL_TX1(mjpeg),
+#if CONFIG_MJPEG_NVTEGRA_HWACCEL
+                        HWACCEL_NVTEGRA(mjpeg),
 #endif
                         NULL
                     },

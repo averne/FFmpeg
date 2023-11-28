@@ -1161,8 +1161,8 @@ const FFCodec ff_h264_decoder = {
 #if CONFIG_H264_VULKAN_HWACCEL
                                HWACCEL_VULKAN(h264),
 #endif
-#if CONFIG_H264_TX1_HWACCEL
-                               HWACCEL_TX1(h264),
+#if CONFIG_H264_NVTEGRA_HWACCEL
+                               HWACCEL_NVTEGRA(h264),
 #endif
                                NULL
                            },

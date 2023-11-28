@@ -18,8 +18,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifndef AVUTIL_TX1_HOST1X_H
-#define AVUTIL_TX1_HOST1X_H
+#ifndef AVUTIL_NVTEGRA_HOST1X_H
+#define AVUTIL_NVTEGRA_HOST1X_H
 
 #include <stdint.h>
 
@@ -91,4 +91,4 @@ static inline uint32_t host1x_opcode_imm(unsigned offset, unsigned value) {
 #define NV_THI_INT_MASK                                                    (0x0000007c)
 #define NV_THI_INT_MASK_FALCON_INT                                         0:0
 
-#endif /* AVUTIL_TX1_HOST1X_H */
+#endif /* AVUTIL_NVTEGRA_HOST1X_H */

@@ -185,8 +185,8 @@ static enum AVPixelFormat get_pixel_format(VP8Context *s)
 #if CONFIG_VP8_NVDEC_HWACCEL
         AV_PIX_FMT_CUDA,
 #endif
-#if CONFIG_VP8_TX1_HWACCEL
-        AV_PIX_FMT_TX1,
+#if CONFIG_VP8_NVTEGRA_HWACCEL
+        AV_PIX_FMT_NVTEGRA,
 #endif
         AV_PIX_FMT_YUV420P,
         AV_PIX_FMT_NONE,
@@ -2984,8 +2984,8 @@ const FFCodec ff_vp8_decoder = {
 #if CONFIG_VP8_NVDEC_HWACCEL
                                HWACCEL_NVDEC(vp8),
 #endif
-#if CONFIG_VP8_TX1_HWACCEL
-                               HWACCEL_TX1(vp8),
+#if CONFIG_VP8_NVTEGRA_HWACCEL
+                               HWACCEL_NVTEGRA(vp8),
 #endif
                                NULL
                            },

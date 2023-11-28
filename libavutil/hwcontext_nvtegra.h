@@ -18,8 +18,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifndef AVUTIL_HWCONTEXT_TX1_H
-#define AVUTIL_HWCONTEXT_TX1_H
+#ifndef AVUTIL_HWCONTEXT_NVTEGRA_H
+#define AVUTIL_HWCONTEXT_NVTEGRA_H
 
 #include <stdint.h>
 
@@ -27,17 +27,17 @@
 #include "frame.h"
 #include "pixfmt.h"
 
-#include "tx1.h"
+#include "nvtegra.h"
 
-typedef struct AVTX1DeviceContext {
-    AVTX1Channel nvdec_channel, nvjpg_channel, vic_channel;
+typedef struct AVNVTegraDeviceContext {
+    AVNVTegraChannel nvdec_channel, nvjpg_channel, vic_channel;
     bool has_nvdec, has_nvjpg;
 
-    AVTX1Map vic_map;
+    AVNVTegraMap vic_map;
     uint32_t vic_setup_off, vic_cmdbuf_off, vic_filter_off;
     uint32_t vic_max_cmdbuf_size;
 
-    AVTX1Cmdbuf vic_cmdbuf;
+    AVNVTegraCmdbuf vic_cmdbuf;
 
     uint32_t dfs_lowcorner;
 
@@ -47,16 +47,16 @@ typedef struct AVTX1DeviceContext {
     int *dfs_bitrate_samples;
     int dfs_cur_sample, dfs_num_samples;
     int64_t dfs_sampling_start_ts;
-} AVTX1DeviceContext;
+} AVNVTegraDeviceContext;
 
-static inline AVTX1Map *ff_tx1_frame_get_fbuf_map(const AVFrame *frame) {
-    return (AVTX1Map *)frame->buf[0]->data;
+static inline AVNVTegraMap *ff_nvtegra_frame_get_fbuf_map(const AVFrame *frame) {
+    return (AVNVTegraMap *)frame->buf[0]->data;
 }
 
-int ff_tx1_map_vic_pic_fmt(enum AVPixelFormat fmt);
+int ff_nvtegra_map_vic_pic_fmt(enum AVPixelFormat fmt);
 
-int ff_tx1_dfs_init(AVHWDeviceContext *ctx, AVTX1Channel *channel, int width, int height, double framerate_hz);
-int ff_tx1_dfs_update(AVHWDeviceContext *ctx, AVTX1Channel *channel, int bitstream_len, int decode_cycles);
-int ff_tx1_dfs_uninit(AVHWDeviceContext *ctx, AVTX1Channel *channel);
+int ff_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int width, int height, double framerate_hz);
+int ff_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int bitstream_len, int decode_cycles);
+int ff_nvtegra_dfs_uninit(AVHWDeviceContext *ctx, AVNVTegraChannel *channel);
 
-#endif /* AVUTIL_HWCONTEXT_TX1_H */
+#endif /* AVUTIL_HWCONTEXT_NVTEGRA_H */
