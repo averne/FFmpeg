@@ -54,7 +54,6 @@ HEADERS = adler32.h                                                     \
           hwcontext_vulkan.h                                            \
           hwcontext_nvtegra.h                                           \
           nvtegra.h                                                     \
-          nvtegra_host1x.h                                              \
           nvhost_ioctl.h                                                \
           nvmap_ioctl.h                                                 \
           iamf.h                                                        \
