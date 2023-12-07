@@ -461,7 +461,7 @@ static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
     if (err < 0)
         goto fail;
 
-    buffer = av_buffer_create((uint8_t *)map, sizeof(map), nvtegra_buffer_free, ctx, 0);
+    buffer = av_buffer_create((uint8_t *)map, sizeof(*map), nvtegra_buffer_free, ctx, 0);
     if (!buffer)
         goto fail;
 

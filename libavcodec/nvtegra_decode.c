@@ -61,7 +61,7 @@ static AVBufferRef *nvtegra_input_map_alloc(void *opaque, size_t size) {
     if (err < 0)
         return NULL;
 
-    buffer = av_buffer_create((uint8_t *)map, sizeof(map), nvtegra_input_map_free, ctx, 0);
+    buffer = av_buffer_create((uint8_t *)map, sizeof(*map), nvtegra_input_map_free, ctx, 0);
     if (!buffer)
         goto fail;
 
