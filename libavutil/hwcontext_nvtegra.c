@@ -19,8 +19,6 @@
  */
 
 #include <stdbool.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include "config.h"
 #include "pixdesc.h"
@@ -40,11 +38,9 @@
 
 #include "hwcontext_nvtegra.h"
 
-#ifndef __SWITCH__
-int g_nvmap_fd = 0, g_nvhost_fd = 0;
-#endif
-
 typedef struct NVTegraDevicePriv {
+    AVBufferRef *driver_state_ref;
+
     AVNVTegraMap vic_map;
     AVNVTegraCmdbuf vic_cmdbuf;
     uint32_t vic_setup_off, vic_cmdbuf_off, vic_filter_off;
@@ -245,22 +241,7 @@ static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
         ff_nvtegra_channel_close(&hwctx->nvjpg_channel);
     ff_nvtegra_channel_close(&hwctx->vic_channel);
 
-#ifndef __SWITCH__
-    if (g_nvmap_fd > 0)
-        close(g_nvmap_fd);
-
-    if (g_nvhost_fd > 0)
-        close(g_nvhost_fd);
-#else
-    nvFenceExit();
-    nvMapExit();
-    nvExit();
-    if (hwctx->has_nvdec)
-        mmuRequestFinalize(&hwctx->nvdec_channel.mmu_request);
-    if (hwctx->has_nvjpg)
-        mmuRequestFinalize(&hwctx->nvjpg_channel.mmu_request);
-    mmuExit();
-#endif
+    av_buffer_unref(&priv->driver_state_ref);
 }
 
 /*
@@ -361,41 +342,27 @@ fail:
 static int nvtegra_device_create(AVHWDeviceContext *ctx, const char *device,
                                  AVDictionary *opts, int flags)
 {
-    int err;
+    NVTegraDevicePriv *priv = ctx->internal->priv;
 
     av_log(ctx, AV_LOG_DEBUG, "Creating NVTEGRA device\n");
 
-#ifndef __SWITCH__
-    if (!g_nvmap_fd) {
-        err = open("/dev/nvmap", O_RDWR | O_SYNC);
-        if (err < 0)
-            return AVERROR(errno);
-        g_nvmap_fd = err;
-    }
+    priv->driver_state_ref = ff_nvtegra_driver_init();
+    if (!priv->driver_state_ref)
+        return AVERROR(ENOSYS);
 
-    if (!g_nvhost_fd) {
-        err = open("/dev/nvhost-ctrl", O_RDWR | O_SYNC);
-        if (err < 0)
-            return AVERROR(errno);
-        g_nvhost_fd = err;
-    }
-#else
-    err = AVERROR(nvInitialize());
-    if (err < 0)
-        return err;
+    return 0;
+}
 
-    err = AVERROR(nvMapInit());
-    if (err < 0)
-        return err;
+static int nvtegra_device_derive(AVHWDeviceContext *dst_ctx,
+                                 AVHWDeviceContext *src_ctx,
+                                 AVDictionary *opts, int flags)
+{
 
-    err = AVERROR(nvFenceInit());
-    if (err < 0)
-        return err;
+    NVTegraDevicePriv *src_priv = src_ctx->internal->priv, *dst_priv = dst_ctx->internal->priv;
 
-    err = AVERROR(mmuInitialize());
-    if (err < 0)
-        return err;
-#endif
+    dst_priv->driver_state_ref = av_buffer_ref(src_priv->driver_state_ref);
+    if (!dst_priv->driver_state_ref)
+        return AVERROR(ENOMEM);
 
     return 0;
 }
@@ -1150,6 +1117,7 @@ const HWContextType ff_hwcontext_type_nvtegra = {
     .frames_priv_size       = 0,
 
     .device_create          = &nvtegra_device_create,
+    .device_derive          = &nvtegra_device_derive,
     .device_init            = &nvtegra_device_init,
     .device_uninit          = &nvtegra_device_uninit,
 

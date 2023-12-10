@@ -30,9 +30,11 @@
 
 #include <string.h>
 
-#include "libavutil/log.h"
-#include "libavutil/error.h"
-#include "libavutil/mem.h"
+#include "buffer.h"
+#include "log.h"
+#include "error.h"
+#include "mem.h"
+#include "thread.h"
 
 #include "nvhost_ioctl.h"
 #include "nvmap_ioctl.h"
@@ -40,9 +42,136 @@
 
 #include "nvtegra.h"
 
+struct DriverState {
+    int nvmap_fd, nvhost_fd;
+};
+
+static AVMutex g_driver_init_mtx = AV_MUTEX_INITIALIZER;
+static struct DriverState *g_driver_state = NULL;
+static AVBufferRef *g_driver_state_ref = NULL;
+
+static void free_driver_fds(void *opaque, uint8_t *data) {
+    if (!g_driver_state)
+        return;
+
 #ifndef __SWITCH__
-extern int g_nvmap_fd, g_nvhost_fd;
+    if (g_driver_state->nvmap_fd > 0)
+        close(g_driver_state->nvmap_fd);
+
+    if (g_driver_state->nvhost_fd > 0)
+        close(g_driver_state->nvhost_fd);
+#else
+    nvFenceExit();
+    nvMapExit();
+    nvExit();
 #endif
+
+    g_driver_init_mtx  = AV_MUTEX_INITIALIZER;
+    g_driver_state_ref = NULL;
+    av_freep(&g_driver_state);
+}
+
+static int init_driver_fds(void) {
+    AVBufferRef *ref;
+    struct DriverState *state;
+    int err;
+
+    state = av_mallocz(sizeof(*state));
+    if (!state)
+        return AVERROR(ENOMEM);
+
+    ref = av_buffer_create((uint8_t *)state, sizeof(*state), free_driver_fds, NULL, 0);
+    if (!state)
+        return AVERROR(ENOMEM);
+
+    g_driver_state     = state;
+    g_driver_state_ref = ref;
+
+#ifndef __SWITCH__
+    err = open("/dev/nvmap", O_RDWR | O_SYNC);
+    if (err < 0)
+        return AVERROR(errno);
+    state->nvmap_fd = err;
+
+    err = open("/dev/nvhost-ctrl", O_RDWR | O_SYNC);
+    if (err < 0)
+        return AVERROR(errno);
+    state->nvhost_fd = err;
+#else
+    err = nvInitialize();
+    if (R_FAILED(err))
+        return AVERROR(err);
+
+    err = nvMapInit();
+    if (R_FAILED(err))
+        return AVERROR(err);
+    state->nvmap_fd = nvMapGetFd();
+
+    err = nvFenceInit();
+    if (R_FAILED(err))
+        return AVERROR(err);
+    /* libnx doesn't export the nvhost-ctrl file descriptor */
+
+    err = mmuInitialize();
+    if (R_FAILED(err))
+        return AVERROR(err);
+#endif
+
+    return 0;
+}
+
+static inline int get_nvmap_fd(void) {
+    if (!g_driver_state)
+        return AVERROR_UNKNOWN;
+
+    if (!g_driver_state->nvmap_fd)
+        return AVERROR_UNKNOWN;
+
+    return g_driver_state->nvmap_fd;
+}
+
+static inline int get_nvhost_fd(void) {
+    if (!g_driver_state)
+        return AVERROR_UNKNOWN;
+
+    if (!g_driver_state->nvhost_fd)
+        return AVERROR_UNKNOWN;
+
+    return g_driver_state->nvhost_fd;
+}
+
+AVBufferRef *ff_nvtegra_driver_init(void) {
+    AVBufferRef *out = NULL;
+    int err;
+
+    /*
+     * We have to do this overly complex dance of putting driver fds in a refcounted struct,
+     * otherwise initializing multiple hwcontexts would leak fds
+     */
+
+    err = ff_mutex_lock(&g_driver_init_mtx);
+    if (err != 0)
+        goto exit;
+
+    if (g_driver_state_ref) {
+        out = av_buffer_ref(g_driver_state_ref);
+        goto exit;
+    }
+
+    err = init_driver_fds();
+    if (err < 0) {
+        // In case memory allocations failed, call the destructor ourselves
+        av_buffer_unref(&g_driver_state_ref);
+        free_driver_fds(NULL, NULL);
+        goto exit;
+    }
+
+    out = g_driver_state_ref;
+
+exit:
+    ff_mutex_unlock(&g_driver_init_mtx);
+    return out;
+}
 
 int ff_nvtegra_channel_open(AVNVTegraChannel *channel, const char *dev) {
     int err;
@@ -215,7 +344,7 @@ int ff_nvtegra_syncpt_wait(AVNVTegraChannel *channel, uint32_t threshold, int32_
         .timeout = timeout,
     };
 
-    return (ioctl(g_nvhost_fd, NVHOST_IOCTL_CTRL_SYNCPT_WAITEX, &args) < 0) ? AVERROR(errno) : 0;
+    return (ioctl(get_nvhost_fd(), NVHOST_IOCTL_CTRL_SYNCPT_WAITEX, &args) < 0) ? AVERROR(errno) : 0;
 #else
     NvFence fence;
 
@@ -247,7 +376,7 @@ int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, ui
         .size   = size,
     };
 
-    err = ioctl(g_nvmap_fd, NVMAP_IOC_CREATE, &create_args);
+    err = ioctl(get_nvmap_fd(), NVMAP_IOC_CREATE, &create_args);
     if (err < 0)
         return AVERROR(errno);
 
@@ -261,7 +390,7 @@ int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, ui
         .align     = align,
     };
 
-    err = ioctl(g_nvmap_fd, NVMAP_IOC_ALLOC, &alloc_args);
+    err = ioctl(get_nvmap_fd(), NVMAP_IOC_ALLOC, &alloc_args);
     if (err < 0)
         goto fail;
 
@@ -291,7 +420,7 @@ int ff_nvtegra_map_free(AVNVTegraMap *map) {
     if (!map->handle)
         return 0;
 
-    err = ioctl(g_nvmap_fd, NVMAP_IOC_FREE, map->handle);
+    err = ioctl(get_nvmap_fd(), NVMAP_IOC_FREE, map->handle);
     if (err < 0)
         return AVERROR(errno);
 
@@ -321,7 +450,7 @@ int ff_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t
         .flags = flags,
     };
 
-    err = ioctl(g_nvmap_fd, NVMAP_IOC_FROM_VA, &args);
+    err = ioctl(get_nvmap_fd(), NVMAP_IOC_FROM_VA, &args);
     if (err < 0)
         return AVERROR(errno);
 

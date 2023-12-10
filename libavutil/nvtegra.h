@@ -24,6 +24,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "buffer.h"
+
 #include "nvhost_ioctl.h"
 #include "nvmap_ioctl.h"
 
@@ -88,6 +90,8 @@ typedef struct AVNVTegraCmdbuf {
     uint32_t num_waitchks;
 #endif
 } AVNVTegraCmdbuf;
+
+AVBufferRef *ff_nvtegra_driver_init(void);
 
 int ff_nvtegra_channel_open(AVNVTegraChannel *channel, const char *dev);
 int ff_nvtegra_channel_close(AVNVTegraChannel *channel);
