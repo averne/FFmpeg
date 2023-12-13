@@ -378,8 +378,6 @@ enum AVPixelFormat {
      */
     AV_PIX_FMT_VULKAN,
 
-    AV_PIX_FMT_NVTEGRA,   ///< Tegra X1 pixel format, data[3] contains nothing
-
     AV_PIX_FMT_Y210BE,    ///< packed YUV 4:2:2 like YUYV422, 20bpp, data in the high bits, big-endian
     AV_PIX_FMT_Y210LE,    ///< packed YUV 4:2:2 like YUYV422, 20bpp, data in the high bits, little-endian
 
@@ -440,6 +438,8 @@ enum AVPixelFormat {
      * data[0] points to an AVD3D12VAFrame
      */
     AV_PIX_FMT_D3D12,
+
+    AV_PIX_FMT_NVTEGRA,   ///< Tegra X1 pixel format, data[3] contains nothing
 
     AV_PIX_FMT_NB         ///< number of pixel formats, DO NOT USE THIS if you want to link with shared libav* because the number of formats might differ between versions
 };
