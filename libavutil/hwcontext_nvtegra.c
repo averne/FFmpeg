@@ -44,6 +44,22 @@
 int g_nvmap_fd = 0, g_nvhost_fd = 0;
 #endif
 
+typedef struct NVTegraDevicePriv {
+    AVNVTegraMap vic_map;
+    AVNVTegraCmdbuf vic_cmdbuf;
+    uint32_t vic_setup_off, vic_cmdbuf_off, vic_filter_off;
+    uint32_t vic_max_cmdbuf_size;
+
+    uint32_t dfs_lowcorner;
+
+    double dfs_decode_cycles_ema;
+    double dfs_decode_ema_damping;
+
+    int *dfs_bitrate_samples;
+    int dfs_cur_sample, dfs_num_samples;
+    int64_t dfs_sampling_start_ts;
+} NVTegraDevicePriv;
+
 /* 3x3 color conversion matrix plus 1x3 color offsets */
 static float mat_rgb_to_ycbcr_bt601lim[3][4] = {
     { 0.25678825,  0.5041294,   0.09790588, 0.0627451 },
@@ -79,7 +95,7 @@ static float mat_rgb_to_ycbcr_bt2020lim[3][4] = {
 static float mat_rgb_to_ycbcr_bt2020full[3][4] = {
     { 0.2627,      0.678,       0.0593,     0.0       },
     {-0.13963006, -0.36036994,  0.5,        0.50196075},
-    { 0.5       , -0.4597857,  -0.0402143,  0.50196075},
+    { 0.5,        -0.4597857,  -0.0402143,  0.50196075},
 };
 
 static float mat_ycbcr_bt601lim_to_rgb[3][4] = {
@@ -216,12 +232,13 @@ static int nvtegra_channel_set_freq(AVNVTegraChannel *channel, uint32_t freq) {
 
 static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
     AVNVTegraDeviceContext *hwctx = ctx->hwctx;
+    NVTegraDevicePriv       *priv = ctx->internal->priv;
 
     av_log(ctx, AV_LOG_DEBUG, "Deinitializing NVTEGRA device\n");
 
-    ff_nvtegra_cmdbuf_deinit(&hwctx->vic_cmdbuf);
+    ff_nvtegra_cmdbuf_deinit(&priv->vic_cmdbuf);
 
-    ff_nvtegra_map_destroy(&hwctx->vic_map);
+    ff_nvtegra_map_destroy(&priv->vic_map);
 
     if (hwctx->has_nvdec)
         ff_nvtegra_channel_close(&hwctx->nvdec_channel);
@@ -257,6 +274,7 @@ static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
 
 static int nvtegra_device_init(AVHWDeviceContext *ctx) {
     AVNVTegraDeviceContext *hwctx = ctx->hwctx;
+    NVTegraDevicePriv       *priv = ctx->internal->priv;
 
     uint32_t vic_map_size;
     int err;
@@ -287,29 +305,29 @@ static int nvtegra_device_init(AVHWDeviceContext *ctx) {
     }
 
 #ifdef __SWITCH__
-    hwctx->vic_map.owner = hwctx->vic_channel.channel.fd;
+    priv->vic_map.owner = hwctx->vic_channel.channel.fd;
 #endif
 
-    hwctx->vic_setup_off  = 0;
-    hwctx->vic_cmdbuf_off = FFALIGN(hwctx->vic_setup_off  + sizeof(VicConfigStruct),
-                                    FF_NVTEGRA_MAP_ALIGN);
-    hwctx->vic_filter_off = FFALIGN(hwctx->vic_cmdbuf_off + FF_NVTEGRA_MAP_ALIGN,
-                                    FF_NVTEGRA_MAP_ALIGN);
-    vic_map_size          = FFALIGN(hwctx->vic_filter_off + 0x3000,
-                                    0x1000);
+    priv->vic_setup_off  = 0;
+    priv->vic_cmdbuf_off = FFALIGN(priv->vic_setup_off  + sizeof(VicConfigStruct),
+                                   FF_NVTEGRA_MAP_ALIGN);
+    priv->vic_filter_off = FFALIGN(priv->vic_cmdbuf_off + FF_NVTEGRA_MAP_ALIGN,
+                                   FF_NVTEGRA_MAP_ALIGN);
+    vic_map_size         = FFALIGN(priv->vic_filter_off + 0x3000,
+                                   0x1000);
 
-    hwctx->vic_max_cmdbuf_size = hwctx->vic_filter_off - hwctx->vic_cmdbuf_off;
+    priv->vic_max_cmdbuf_size = priv->vic_filter_off - priv->vic_cmdbuf_off;
 
-    err = ff_nvtegra_map_create(&hwctx->vic_map, vic_map_size, 0x100, NVMAP_CACHE_OP_INV);
+    err = ff_nvtegra_map_create(&priv->vic_map, vic_map_size, 0x100, NVMAP_CACHE_OP_INV);
     if (err < 0)
         goto fail;
 
-    err = ff_nvtegra_cmdbuf_init(&hwctx->vic_cmdbuf);
+    err = ff_nvtegra_cmdbuf_init(&priv->vic_cmdbuf);
     if (err < 0)
         goto fail;
 
-    err = ff_nvtegra_cmdbuf_add_memory(&hwctx->vic_cmdbuf, &hwctx->vic_map,
-                                       hwctx->vic_cmdbuf_off, hwctx->vic_max_cmdbuf_size);
+    err = ff_nvtegra_cmdbuf_add_memory(&priv->vic_cmdbuf, &priv->vic_map,
+                                       priv->vic_cmdbuf_off, priv->vic_max_cmdbuf_size);
     if (err < 0)
         goto fail;
 
@@ -427,7 +445,7 @@ static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
 #endif
 
     AVBufferRef *buffer;
-    AVNVTegraMap    *map;
+    AVNVTegraMap *map;
     int err;
 
     av_log(ctx, AV_LOG_DEBUG, "Creating surface from NVTEGRA device\n");
@@ -525,15 +543,17 @@ static int nvtegra_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
  *   422.4, 441.6, 499.2, 518.4, 537.6, 556.8, 576.0, 595.2, 614.4, 633.6, 652.8
  */
 
-int ff_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int width, int height, double framerate_hz) {
-    AVNVTegraDeviceContext *hwctx = ctx->hwctx;
+int ff_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int width, int height,
+                        double framerate_hz)
+{
+    NVTegraDevicePriv *priv = ctx->internal->priv;
 
     uint32_t max_freq, lowcorner;
     int num_mbs, err;
 
-    hwctx->dfs_num_samples        = 20;
-    hwctx->dfs_decode_ema_damping = 0.1;
-    hwctx->dfs_sampling_start_ts  = av_gettime_relative();
+    priv->dfs_num_samples        = 20;
+    priv->dfs_decode_ema_damping = 0.1;
+    priv->dfs_sampling_start_ts  = av_gettime_relative();
 
     /*
      * Initialize low-corner frequency (reproduces official code)
@@ -552,14 +572,14 @@ int ff_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int w
     if (framerate_hz >= 0.1 && isfinite(framerate_hz))
         lowcorner = FFMIN(lowcorner, lowcorner * framerate_hz / 30.0);
 
-    hwctx->dfs_lowcorner = lowcorner;
+    priv->dfs_lowcorner = lowcorner;
 
-    hwctx->dfs_bitrate_samples = av_malloc_array(hwctx->dfs_num_samples, sizeof(*hwctx->dfs_bitrate_samples));
-    if (!hwctx->dfs_bitrate_samples)
+    priv->dfs_bitrate_samples = av_malloc_array(priv->dfs_num_samples, sizeof(*priv->dfs_bitrate_samples));
+    if (!priv->dfs_bitrate_samples)
         return AVERROR(ENOMEM);
 
     av_log(ctx, AV_LOG_DEBUG, "DFS: Initializing lowcorner to %d Hz, using %u samples\n",
-           hwctx->dfs_lowcorner, hwctx->dfs_num_samples);
+           priv->dfs_lowcorner, priv->dfs_num_samples);
 
     /*
      * Initialize channel to the max possible frequency (the kernel driver will clamp to an allowed value)
@@ -576,7 +596,7 @@ int ff_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int w
 }
 
 int ff_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int bitstream_len, int decode_cycles) {
-    AVNVTegraDeviceContext *hwctx = ctx->hwctx;
+    NVTegraDevicePriv *priv = ctx->internal->priv;
 
     double avg;
     uint32_t sum, clock;
@@ -595,41 +615,41 @@ int ff_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int
     bitstream_len *= 8;
 
     /* Exponential moving average of decode cycles per bitstream bit */
-    hwctx->dfs_decode_cycles_ema = hwctx->dfs_decode_ema_damping * (double)decode_cycles/bitstream_len +
-        (1.0 - hwctx->dfs_decode_ema_damping) * hwctx->dfs_decode_cycles_ema;
+    priv->dfs_decode_cycles_ema = priv->dfs_decode_ema_damping * (double)decode_cycles/bitstream_len +
+        (1.0 - priv->dfs_decode_ema_damping) * priv->dfs_decode_cycles_ema;
 
-    hwctx->dfs_cur_sample = (hwctx->dfs_cur_sample + 1) % hwctx->dfs_num_samples;
-    hwctx->dfs_bitrate_samples[hwctx->dfs_cur_sample] = bitstream_len;
+    priv->dfs_cur_sample = (priv->dfs_cur_sample + 1) % priv->dfs_num_samples;
+    priv->dfs_bitrate_samples[priv->dfs_cur_sample] = bitstream_len;
 
     /* Reclock if we collected enough samples */
-    if (hwctx->dfs_cur_sample == 0) {
+    if (priv->dfs_cur_sample == 0) {
         /* Flat average of bitstream bits per time interval */
-        for (sum = i = 0; i < hwctx->dfs_num_samples; ++i)
-            sum += hwctx->dfs_bitrate_samples[i];
+        for (sum = i = 0; i < priv->dfs_num_samples; ++i)
+            sum += priv->dfs_bitrate_samples[i];
 
         time = av_gettime_relative();
-        avg = sum * 1e6 / (time - hwctx->dfs_sampling_start_ts);
+        avg = sum * 1e6 / (time - priv->dfs_sampling_start_ts);
 
-        clock = hwctx->dfs_decode_cycles_ema * avg * 1.2;
-        clock = FFMAX(clock, hwctx->dfs_lowcorner);
+        clock = priv->dfs_decode_cycles_ema * avg * 1.2;
+        clock = FFMAX(clock, priv->dfs_lowcorner);
 
         err = nvtegra_channel_set_freq(channel, clock);
         if (err < 0)
             return err;
 
         av_log(ctx, AV_LOG_DEBUG, "DFS: %.0f cycles/b (ema), %.0f b/s -> clock %u Hz (lowcorner %u Hz)\n",
-               hwctx->dfs_decode_cycles_ema, avg, clock, hwctx->dfs_lowcorner);
+               priv->dfs_decode_cycles_ema, avg, clock, priv->dfs_lowcorner);
 
-        hwctx->dfs_sampling_start_ts = time;
+        priv->dfs_sampling_start_ts = time;
     }
 
-    return 0;
+    return err;
 }
 
 int ff_nvtegra_dfs_uninit(AVHWDeviceContext *ctx, AVNVTegraChannel *channel) {
-    AVNVTegraDeviceContext *hwctx = ctx->hwctx;
+    NVTegraDevicePriv *priv = ctx->internal->priv;
 
-    av_free(hwctx->dfs_bitrate_samples);
+    av_free(priv->dfs_bitrate_samples);
 
     return 0;
 }
@@ -822,11 +842,14 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, c
     }
 }
 
-static int nvtegra_vic_prepare_cmdbuf(AVNVTegraDeviceContext *hwctx, AVNVTegraMap *map,
+static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx, AVNVTegraMap *map,
                                       uint32_t *map_offsets, int num_comps,
                                       const AVFrame *src, enum AVPixelFormat fmt)
 {
-    AVNVTegraCmdbuf *cmdbuf = &hwctx->vic_cmdbuf;
+    AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
+    NVTegraDevicePriv       *priv = ctx->device_ctx->internal->priv;
+
+    AVNVTegraCmdbuf *cmdbuf = &priv->vic_cmdbuf;
 
     AVNVTegraMap *src_map;
     int input_reloc_type, err;
@@ -846,9 +869,9 @@ static int nvtegra_vic_prepare_cmdbuf(AVNVTegraDeviceContext *hwctx, AVNVTegraMa
                           FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, CONFIG_STRUCT_SIZE, sizeof(VicConfigStruct) >> 4) |
                           FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, GPTIMER_ON,         1));
     FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONFIG_STRUCT_OFFSET,
-                          &hwctx->vic_map, hwctx->vic_setup_off,  NVHOST_RELOC_TYPE_DEFAULT);
+                          &priv->vic_map, priv->vic_setup_off,  NVHOST_RELOC_TYPE_DEFAULT);
     FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_FILTER_STRUCT_OFFSET,
-                          &hwctx->vic_map, hwctx->vic_filter_off, NVHOST_RELOC_TYPE_DEFAULT);
+                          &priv->vic_map, priv->vic_filter_off, NVHOST_RELOC_TYPE_DEFAULT);
 
     for (int i = 0; i < num_comps; ++i)
         FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET + i * sizeof(uint32_t),
@@ -912,22 +935,23 @@ static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const
                                      int num_planes, bool is_chroma)
 {
     AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
-    AVNVTegraCmdbuf       *cmdbuf = &hwctx->vic_cmdbuf;
+    NVTegraDevicePriv       *priv = ctx->device_ctx->internal->priv;
+    AVNVTegraCmdbuf       *cmdbuf = &priv->vic_cmdbuf;
 
     uint32_t render_fence;
     uint8_t *mem;
     int err;
 
-    mem = ff_nvtegra_map_get_addr(&hwctx->vic_map);
+    mem = ff_nvtegra_map_get_addr(&priv->vic_map);
 
-    nvtegra_vic_preprare_config((VicConfigStruct *)(mem + hwctx->vic_setup_off),
+    nvtegra_vic_preprare_config((VicConfigStruct *)(mem + priv->vic_setup_off),
                                 dst, src, fmt, is_chroma);
 
     err = ff_nvtegra_cmdbuf_clear(cmdbuf);
     if (err < 0)
         return err;
 
-    err = nvtegra_vic_prepare_cmdbuf(hwctx, map, plane_offsets, num_planes, src, fmt);
+    err = nvtegra_vic_prepare_cmdbuf(ctx, map, plane_offsets, num_planes, src, fmt);
     if (err < 0)
         goto fail;
 
@@ -1108,7 +1132,7 @@ const HWContextType ff_hwcontext_type_nvtegra = {
     .name                   = "nvtegra",
 
     .device_hwctx_size      = sizeof(AVNVTegraDeviceContext),
-    .device_priv_size       = 0,
+    .device_priv_size       = sizeof(NVTegraDevicePriv),
     .device_hwconfig_size   = 0,
     .frames_hwctx_size      = 0,
     .frames_priv_size       = 0,
