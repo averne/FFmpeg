@@ -246,10 +246,10 @@ static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
 
 /*
  * Hardware modules on the Tegra X1 (see t210.c in l4t kernel sources)
- *  - nvdec v2.0
- *  - nvenc v5.0
- *  - nvjpg v1.0
- *  - vic   v4.0
+ * - nvdec v2.0
+ * - nvenc v5.0
+ * - nvjpg v1.0
+ * - vic   v4.0
  */
 
 static int nvtegra_device_init(AVHWDeviceContext *ctx) {

@@ -84,8 +84,8 @@ static int nvtegra_vc1_decode_init(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing NVTEGRA VC1 decoder\n");
 
-    width_in_mbs   = FFALIGN(avctx->coded_width,  MB_SIZE) / MB_SIZE;
-    height_in_mbs  = FFALIGN(avctx->coded_height, MB_SIZE) / MB_SIZE;
+    width_in_mbs  = FFALIGN(avctx->coded_width,  MB_SIZE) / MB_SIZE;
+    height_in_mbs = FFALIGN(avctx->coded_height, MB_SIZE) / MB_SIZE;
 
     num_slices = width_in_mbs * height_in_mbs;
 
@@ -110,14 +110,14 @@ static int nvtegra_vc1_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
-    coloc_size   = FFALIGN(FFALIGN(height_in_mbs, 2) * (width_in_mbs * 64) - 63, 0x100);
-    history_size = FFALIGN(width_in_mbs, 2) * 768;
+    coloc_size   = 3 * FFALIGN(width_in_mbs * FFALIGN(height_in_mbs, 2) * 64 - 63, FF_NVTEGRA_MAP_ALIGN);
+    history_size = FFALIGN(width_in_mbs, 2) * 0x300;
     scratch_size = 0x400;
 
     ctx->coloc_off   = 0;
     ctx->history_off = FFALIGN(ctx->coloc_off   + coloc_size,   FF_NVTEGRA_MAP_ALIGN);
     ctx->scratch_off = FFALIGN(ctx->history_off + history_size, FF_NVTEGRA_MAP_ALIGN);
-    common_map_size  = FFALIGN(ctx->scratch_off  + scratch_size, 0x1000);
+    common_map_size  = FFALIGN(ctx->scratch_off + scratch_size, 0x1000);
 
 #ifdef __SWITCH__
     hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
@@ -151,11 +151,14 @@ static void nvtegra_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
 {
     VC1Context     *v = avctx->priv_data;
     MpegEncContext *s = &v->s;
-    AVFrame    *frame = s->current_picture.f;
+    AVFrame    *frame = s->current_picture_ptr->f;
 
     /*
-     * Note: a lot of fields in this structure are unused by official software,
-     * here we only set those used by official code
+     * Notes:
+     * - s->current_picture.f->linesize is unconsistently doubled for interlaced content
+     *   between I-frames and others, so s->current_pic_ptr is used
+     * - a lot of fields in this structure are unused by official software,
+     *   here we only set those
      */
     *setup = (nvdec_vc1_pic_s){
         .scratch_pic_buffer_size = ctx->scratch_size,
@@ -169,7 +172,6 @@ static void nvtegra_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
             frame->linesize[1],
         },
 
-        // TODO: Set these for interlaced content
         .luma_top_offset         = 0,
         .luma_bot_offset         = 0,
         .luma_frame_offset       = 0,
@@ -218,44 +220,28 @@ static void nvtegra_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
         .panscan_flag            = v->panscanflag,
         .dquant                  = v->dquant,
         .refdist_flag            = v->refdist_flag,
-        .refdist                 = v->refdist,
         .quantizer               = v->quantizer_mode,
         .overlap                 = v->overlap,
         .vstransform             = v->vstransform,
-        .transacfrm              = v->c_ac_table_index,
-        .transacfrm2             = v->y_ac_table_index,
-        .transdctab              = v->s.dc_table_index,
         .extended_mv             = v->extended_mv,
-        .mvrange                 = v->mvrange,
         .extended_dmv            = v->extended_dmv,
-        .dmvrange                = v->dmvrange,
-        .fcm                     = (v->fcm == 0) ? 0 : v->fcm + 1,
-        .pquantizer              = v->pquantizer,
-        .dqprofile               = v->dqprofile,
-        .dqsbedge                = (v->dqprofile == DQPROFILE_SINGLE_EDGE)  ? v->dqsbedge : 0,
-        .dqdbedge                = (v->dqprofile == DQPROFILE_DOUBLE_EDGES) ? v->dqsbedge : 0,
-        .dqbilevel               = v->dqbilevel,
     };
 
-    setup->displayPara.enableTFOutput = 1;
     if (v->profile == PROFILE_ADVANCED) {
+        setup->displayPara.enableTFOutput = 1;
         setup->displayPara.VC1MapYFlag    = v->range_mapy_flag;
         setup->displayPara.MapYValue      = v->range_mapy;
         setup->displayPara.VC1MapUVFlag   = v->range_mapuv_flag;
         setup->displayPara.MapUVValue     = v->range_mapuv;
-    } else {
-        if ((v->rangered == 0) || (v->rangeredfrm == 0)) {
-            setup->displayPara.enableTFOutput = false;
-        } else {
-            setup->displayPara.VC1MapYFlag    = 1;
-            setup->displayPara.MapYValue      = 7;
-            setup->displayPara.VC1MapUVFlag   = 1;
-            setup->displayPara.MapUVValue     = 7;
-        }
+    } else if (v->rangered && v->rangeredfrm) {
+        setup->displayPara.enableTFOutput = 1;
+        setup->displayPara.VC1MapYFlag    = 1;
+        setup->displayPara.MapYValue      = 7;
+        setup->displayPara.VC1MapUVFlag   = 1;
+        setup->displayPara.MapUVValue     = 7;
     }
 
-    if ((v->range_mapy_flag != 0) || (v->range_mapuv_flag != 0)) {
-        // TODO: Set these
+    if (v->range_mapy_flag || v->range_mapuv_flag) {
         setup->displayPara.OutputBottom[0] = 0;
         setup->displayPara.OutputBottom[1] = 0;
         setup->displayPara.OutputStructure = v->interlace & 1;
@@ -266,9 +252,9 @@ static void nvtegra_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
 static int nvtegra_vc1_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, VC1Context *v, NVTegraVC1DecodeContext *ctx,
                                       AVFrame *cur_frame, AVFrame *prev_frame, AVFrame *next_frame)
 {
-    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    NVTegraFrame         *tf = fdd->hwaccel_priv;
-    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FrameDecodeData    *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    NVTegraFrame        *tf = fdd->hwaccel_priv;
+    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int err;
 
@@ -318,9 +304,9 @@ static int nvtegra_vc1_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, VC1Context *v, NV
     if (((v->profile != PROFILE_ADVANCED) && ((v->rangered != 0) || (v->rangeredfrm != 0))) ||
             ((v->range_mapy_flag != 0) || (v->range_mapuv_flag != 0))) {
         FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_LUMA_OFFSET,
-                          &rangeMappedOutput.luma, 0, NVHOST_RELOC_TYPE_DEFAULT);
+                              &output.luma, 0, NVHOST_RELOC_TYPE_DEFAULT);
         FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_CHROMA_OFFSET,
-                          &rangeMappedOutput.chroma, 0, NVHOST_RELOC_TYPE_DEFAULT);
+                              &output.chroma, 0, NVHOST_RELOC_TYPE_DEFAULT);
     }
      */
 
@@ -348,12 +334,6 @@ static int nvtegra_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
 
     av_log(avctx, AV_LOG_DEBUG, "Starting VC1-NVTEGRA frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
-
-    /*
-     * TODO: Set top/bottom fields offsets
-    if (v->fcm == ILACE_FIELD)
-        return AVERROR_PATCHWELCOME;
-     */
 
     ctx->is_first_slice = true;
 
@@ -431,9 +411,9 @@ static int nvtegra_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
             startcode = VC1_CODE_FIELD;
 
         /*
-        * Skip a word if the bitstream already contains the startcode
-        * We could probably just not insert our startcode but this is what official code does
-        */
+         * Skip a dword if the bitstream already contains the startcode
+         * We could probably just not insert our startcode but this is what official code does
+         */
         if ((buf_size >= 4) && (AV_RB32(buf) == startcode))
             setup->bitstream_offset = 1;
 
