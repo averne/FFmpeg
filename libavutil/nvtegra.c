@@ -66,7 +66,7 @@ static void free_driver_fds(void *opaque, uint8_t *data) {
     nvExit();
 #endif
 
-    g_driver_init_mtx  = AV_MUTEX_INITIALIZER;
+    g_driver_init_mtx  = (AVMutex)AV_MUTEX_INITIALIZER;
     g_driver_state_ref = NULL;
     av_freep(&g_driver_state);
 }
@@ -855,7 +855,6 @@ int ff_nvtegra_cmdbuf_add_waitchk(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint
 #ifndef __SWITCH__
     uint8_t *mem;
     void *tmp;
-    int err;
 
     mem = ff_nvtegra_map_get_addr(cmdbuf->map);
 
