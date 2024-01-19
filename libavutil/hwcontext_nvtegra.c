@@ -235,10 +235,20 @@ static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
 
     ff_nvtegra_map_destroy(&priv->vic_map);
 
-    if (hwctx->has_nvdec)
+    if (hwctx->has_nvdec) {
         ff_nvtegra_channel_close(&hwctx->nvdec_channel);
-    if (hwctx->has_nvjpg)
+#ifdef __SWITCH__
+        mmuRequestFinalize(&hwctx->nvdec_channel.mmu_request);
+#endif
+    }
+
+    if (hwctx->has_nvjpg) {
         ff_nvtegra_channel_close(&hwctx->nvjpg_channel);
+#ifdef __SWITCH__
+        mmuRequestFinalize(&hwctx->nvjpg_channel.mmu_request);
+#endif
+    }
+
     ff_nvtegra_channel_close(&hwctx->vic_channel);
 
     av_buffer_unref(&priv->driver_state_ref);

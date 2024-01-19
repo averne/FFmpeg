@@ -64,6 +64,7 @@ static void free_driver_fds(void *opaque, uint8_t *data) {
     nvFenceExit();
     nvMapExit();
     nvExit();
+    mmuExit();
 #endif
 
     g_driver_init_mtx  = (AVMutex)AV_MUTEX_INITIALIZER;
@@ -160,7 +161,7 @@ AVBufferRef *ff_nvtegra_driver_init(void) {
 
     err = init_driver_fds();
     if (err < 0) {
-        // In case memory allocations failed, call the destructor ourselves
+        /* In case memory allocations failed, call the destructor ourselves */
         av_buffer_unref(&g_driver_state_ref);
         free_driver_fds(NULL, NULL);
         goto exit;
