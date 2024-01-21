@@ -135,7 +135,8 @@ static int nvtegra_vp8_decode_init(AVCodecContext *avctx) {
     ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
 #endif
 
-    err = ff_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100, NVMAP_CACHE_OP_INV);
+    err = ff_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
+                                NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;
 

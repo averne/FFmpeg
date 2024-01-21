@@ -56,8 +56,8 @@ static AVBufferRef *nvtegra_input_map_alloc(void *opaque, size_t size) {
     map->owner = ctx->channel->channel.fd;
 #endif
 
-    err = ff_nvtegra_map_create(map, ctx->input_map_size,
-                                0x100, NVMAP_CACHE_OP_INV);
+    err = ff_nvtegra_map_create(map, ctx->input_map_size, 0x100,
+                                NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         return NULL;
 
@@ -295,7 +295,8 @@ int ff_nvtegra_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     }
 
     if (ctx->input_map_size != ff_nvtegra_map_get_size(input_map)) {
-        err = ff_nvtegra_map_realloc(input_map, ctx->input_map_size, 0x100, NVMAP_CACHE_OP_INV);
+        err = ff_nvtegra_map_realloc(input_map, ctx->input_map_size, 0x100,
+                                     NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
         if (err < 0)
             return err;
 

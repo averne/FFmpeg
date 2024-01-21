@@ -102,18 +102,21 @@ int ff_nvtegra_channel_set_submit_timeout(AVNVTegraChannel *channel, uint32_t ti
 
 int ff_nvtegra_syncpt_wait(AVNVTegraChannel *channel, uint32_t threshold, int32_t timeout);
 
-int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, uint32_t flags);
+int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, int heap_mask, int flags);
 int ff_nvtegra_map_free(AVNVTegraMap *map);
 int ff_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t align, uint32_t flags);
 int ff_nvtegra_map_close(AVNVTegraMap *map);
 int ff_nvtegra_map_map(AVNVTegraMap *map);
 int ff_nvtegra_map_unmap(AVNVTegraMap *map);
-int ff_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align, uint32_t flags);
+int ff_nvtegra_map_cache_op(AVNVTegraMap *map, int op, void *addr, size_t len);
+int ff_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align, int heap_mask, int flags);
 
-static inline int ff_nvtegra_map_create(AVNVTegraMap *map, uint32_t size, uint32_t align, uint32_t flags) {
+static inline int ff_nvtegra_map_create(AVNVTegraMap *map, uint32_t size, uint32_t align,
+                                        int heap_mask, int flags)
+{
     int err;
 
-    err = ff_nvtegra_map_allocate(map, size, align, flags);
+    err = ff_nvtegra_map_allocate(map, size, align, heap_mask, flags);
     if (err < 0)
         return err;
 
@@ -190,7 +193,7 @@ static inline uint32_t ff_nvtegra_map_get_size(AVNVTegraMap *map) {
 
 #define FF_NVTEGRA_PUSH_RELOC(cmdbuf, offset, target, target_offset, type) ({    \
     int _err = ff_nvtegra_cmdbuf_push_reloc(cmdbuf, (offset) / sizeof(uint32_t), \
-                                        target, target_offset, type, 8);         \
+                                            target, target_offset, type, 8);     \
     if (_err < 0)                                                                \
         return _err;                                                             \
 })

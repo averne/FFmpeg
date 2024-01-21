@@ -42,6 +42,12 @@
 
 #include "nvtegra.h"
 
+/*
+ * Tag used by the kernel to identify allocations.
+ * Official software has been seen using 0x900, 0xf00, 0x1100, 0x1400, 0x4000.
+ */
+#define MEM_TAG (0xfeed)
+
 struct DriverState {
     int nvmap_fd, nvhost_fd;
 };
@@ -359,15 +365,21 @@ int ff_nvtegra_syncpt_wait(AVNVTegraChannel *channel, uint32_t threshold, int32_
 }
 
 #ifdef __SWITCH__
-static bool convert_cache_op(void *mem, size_t size, uint32_t flags) {
-    /* libnx will perform a cache flush internally for cpu-uncached memory */
-    if (flags == NVMAP_CACHE_OP_WB)
-        armDCacheFlush(mem, size);
-    return flags == NVMAP_CACHE_OP_WB;
+static inline bool convert_cache_flags(uint32_t flags) {
+    /* Return whether the map should be CPU-cacheable */
+    switch (flags & NVMAP_HANDLE_CACHE_FLAG) {
+        case NVMAP_HANDLE_INNER_CACHEABLE:
+        case NVMAP_HANDLE_CACHEABLE:
+            return true;
+        default:
+            return false;
+    }
 }
 #endif
 
-int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, uint32_t flags) {
+int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align,
+                            int heap_mask, int flags)
+{
 #ifndef __SWITCH__
     struct nvmap_create_handle create_args;
     struct nvmap_alloc_handle alloc_args;
@@ -386,8 +398,8 @@ int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, ui
 
     alloc_args = (struct nvmap_alloc_handle){
         .handle    = create_args.handle,
-        .heap_mask = 0x40000000,
-        .flags     = flags | (1 << 16), /* Add tag to silence kernel warning */
+        .heap_mask = heap_mask,
+        .flags     = flags | (MEM_TAG << 16),
         .align     = align,
     };
 
@@ -410,7 +422,7 @@ fail:
         return AVERROR(ENOMEM);
 
     return AVERROR(nvMapCreate(&map->map, mem, size, 0x10000, NvKind_Pitch,
-                               convert_cache_op(mem, size, flags)));
+                               convert_cache_flags(flags)));
 #endif
 }
 
@@ -448,7 +460,7 @@ int ff_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t
     args = (struct nvmap_create_handle_from_va){
         .va    = (uintptr_t)mem,
         .size  = size,
-        .flags = flags,
+        .flags = flags | (MEM_TAG << 16),
     };
 
     err = ioctl(get_nvmap_fd(), NVMAP_IOC_FROM_VA, &args);
@@ -462,7 +474,7 @@ int ff_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t
     return 0;
 #else
     return AVERROR(nvMapCreate(&map->map, mem, FFALIGN(size, 0x1000), 0x10000, NvKind_Pitch,
-                               convert_cache_op(mem, size, flags)));
+                               convert_cache_flags(flags)));;
 #endif
 }
 
@@ -538,7 +550,41 @@ int ff_nvtegra_map_unmap(AVNVTegraMap *map) {
 #endif
 }
 
-int ff_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align, uint32_t flags) {
+int ff_nvtegra_map_cache_op(AVNVTegraMap *map, int op, void *addr, size_t len) {
+#ifndef __SWITCH__
+    struct nvmap_cache_op args;
+
+    args = (struct nvmap_cache_op){
+        .addr   = (uintptr_t)addr,
+        .len    = len,
+        .handle = ff_nvtegra_map_get_handle(map),
+        .op     = op,
+    };
+
+    return AVERROR(ioctl(get_nvmap_fd(), NVMAP_IOC_CACHE, &args));
+#else
+    if (!map->map.is_cpu_cacheable)
+        return 0;
+
+    switch (op) {
+        case NVMAP_CACHE_OP_WB:
+            armDCacheClean(addr, len);
+            break;
+        default:
+        case NVMAP_CACHE_OP_INV:
+        case NVMAP_CACHE_OP_WB_INV:
+            /* libnx internally performs a clean-invalidate, since invalidate is a privileged instruction */
+            armDCacheFlush(addr, len);
+            break;
+    }
+
+    return 0;
+#endif
+}
+
+int ff_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align,
+                           int heap_mask, int flags)
+{
     AVNVTegraMap tmp = {0};
     int err;
 
@@ -549,7 +595,7 @@ int ff_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align, uin
     tmp.owner = map->owner;
 #endif
 
-    err = ff_nvtegra_map_create(&tmp, size, align, flags);
+    err = ff_nvtegra_map_create(&tmp, size, align, heap_mask, flags);
     if (err < 0)
         goto fail;
 

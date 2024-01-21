@@ -177,7 +177,7 @@ int ff_nvtegra_map_vic_pic_fmt(enum AVPixelFormat fmt) {
     }
 }
 
-static uint32_t nvtegra_surface_get_width_align(enum AVPixelFormat fmt, const AVComponentDescriptor *comp) {
+static inline uint32_t nvtegra_surface_get_width_align(enum AVPixelFormat fmt, const AVComponentDescriptor *comp) {
     int step = comp->step;
 
     if (fmt != AV_PIX_FMT_NVTEGRA)
@@ -190,7 +190,7 @@ static uint32_t nvtegra_surface_get_width_align(enum AVPixelFormat fmt, const AV
     return 64 / step;
 }
 
-static uint32_t nvtegra_surface_get_height_align(enum AVPixelFormat fmt, const AVComponentDescriptor *comp) {
+static inline uint32_t nvtegra_surface_get_height_align(enum AVPixelFormat fmt, const AVComponentDescriptor *comp) {
     /* Height alignment is in terms of lines, not bytes, therefore we don't divide by the sample step */
     if (fmt != AV_PIX_FMT_NVTEGRA)
         return 4; /* We use 64Bx4 cache width in VIC for pitch linear surfaces */
@@ -308,7 +308,8 @@ static int nvtegra_device_init(AVHWDeviceContext *ctx) {
 
     priv->vic_max_cmdbuf_size = priv->vic_filter_off - priv->vic_cmdbuf_off;
 
-    err = ff_nvtegra_map_create(&priv->vic_map, vic_map_size, 0x100, NVMAP_CACHE_OP_INV);
+    err = ff_nvtegra_map_create(&priv->vic_map, vic_map_size, 0x100,
+                                NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;
 
@@ -434,9 +435,18 @@ static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
     map->owner = hwctx->nvdec_channel.channel.fd;
 #endif
 
-    err = ff_nvtegra_map_create(map, size, 0x100, NVMAP_CACHE_OP_INV);
+    /*
+     * Framebuffers are allocated as CPU-cacheable, since they might get copied from
+     * during transfer operations. Cache management is done manually.
+     */
+    err = ff_nvtegra_map_create(map, size, 0x100,
+                                NVMAP_HEAP_CARVEOUT_GENERIC, NVMAP_HANDLE_CACHEABLE);
     if (err < 0)
         goto fail;
+
+    /* Flush the CPU cache */
+    ff_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_WB, ff_nvtegra_map_get_addr(map),
+                            ff_nvtegra_map_get_size(map));
 
     buffer = av_buffer_create((uint8_t *)map, sizeof(*map), nvtegra_buffer_free, ctx, 0);
     if (!buffer)
@@ -662,7 +672,108 @@ static int nvtegra_transfer_get_formats(AVHWFramesContext *ctx,
     return 0;
 }
 
-static int pack_to_fixed_point(float val, bool sign, int integer, int fractional) {
+static inline void nvtegra_cpu_copy_plane(void *dst, int dst_stride,
+                                          void *src, int src_stride, int h, bool from)
+{
+    /*
+     * Adapted from https://fgiesen.wordpress.com/2011/01/17/texture-tiling-and-swizzling/.
+     * We process 16x2 bytes at a time. Horizontally, this is the size of a linear atom
+     * in a 16Bx2 sector, conveniently also the size of a cache line and of a macroblock.
+     *
+     * NVDEC always uses a GOB height of 2 (block height of 16, in line with macroblock dimensions).
+     * The corresponding swizzling pattern is the following:
+     *    y3 y2 y1 y0 x5 x4 x3 x2 x1 x0
+     * x: ___x5_______x4____x3 x3 x1 x0
+     * y: y3____y2 y1____y0____________
+     *
+     * Addresses for the 4 lower bits can then be copied as-is (16 bytes).
+     * As a further optimization, the y0 bit is also handled within the same inner loop,
+     * which halves the total number of iterations.
+     *
+     * This function is declared inline with the expectation that the compiler will optimize
+     * the branches depending on the copy direction.
+     */
+
+    __uint128_t *src_ = src, *dst_ = dst, *src_line, *dst_line;
+    uint32_t ws = src_stride / sizeof(__uint128_t), wd = dst_stride / sizeof(__uint128_t),
+        w = FFMIN(ws, wd), offs_x = 0, offs_y = 0, offs_line;
+    uint32_t x_mask = -0x2e, y_mask = 0x2c;
+    int x, y;
+
+    for (y = 0; y < h; y += 2) {
+        dst_line = dst_ + (from ? y * wd : offs_y);
+        src_line = src_ + (from ? offs_y : y * ws);
+
+        offs_line = offs_x;
+        for (x = 0; x < w; ++x) {
+            dst_line[from ? x+0  : offs_line+0] = src_line[from ? offs_line+0 : x+0 ];
+            dst_line[from ? x+wd : offs_line+1] = src_line[from ? offs_line+1 : x+ws];
+            offs_line = (offs_line - x_mask) & x_mask;
+        }
+
+        offs_y = (offs_y - y_mask) & y_mask;
+
+        /* Wrap into next tile row */
+        if (!offs_y)
+            offs_x += from ? src_stride : dst_stride;
+    }
+}
+
+static int nvtegra_cpu_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst, const AVFrame *src,
+                                     int num_planes, bool from)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(ctx->sw_format);
+    const AVFrame *hwframe, *swframe;
+    AVNVTegraMap *map;
+    int h, i;
+
+    hwframe = from ? src : dst, swframe = from ? dst : src;
+    map = ff_nvtegra_frame_get_fbuf_map(hwframe);
+
+    if (swframe->format != ctx->sw_format) {
+        av_log(ctx, AV_LOG_ERROR, "Source and destination must have the same format for cpu transfers\n");
+        return AVERROR(EINVAL);
+    }
+
+    /* If we are transferring from a hardware frame, invalidate the CPU cache which might be stale */
+    if (from) {
+        ff_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_INV,
+                                ff_nvtegra_map_get_addr(map), ff_nvtegra_map_get_size(map));
+    }
+
+    /* Align the height to an even size */
+    h = FFALIGN(dst->height, 2);
+
+    for (i = 0; i < num_planes; ++i) {
+        if (map->is_linear) {
+            av_image_copy_plane(dst->data[i], dst->linesize[i], src->data[i], src->linesize[i],
+                                FFMIN(dst->linesize[i], src->linesize[i]),
+                                h >> (i ? desc->log2_chroma_h : 0));
+        } else {
+            /*
+             * Instanciate the same inlined function for both destinations,
+             * giving the compiler the opportunity to remove branching within the copy loops.
+             * (verified by decompilation at -O1 and higher for both gcc and clang)
+             */
+            if (from)
+                nvtegra_cpu_copy_plane(dst->data[i], dst->linesize[i], src->data[i], src->linesize[i],
+                                       h >> (i ? desc->log2_chroma_h : 0), true);
+            else
+                nvtegra_cpu_copy_plane(dst->data[i], dst->linesize[i], src->data[i], src->linesize[i],
+                                       h >> (i ? desc->log2_chroma_h : 0), false);
+        }
+    }
+
+    /* If we transferred to a hardware frame, flush the CPU cache to make the data visible to hardware engines */
+    if (!from) {
+        ff_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_WB,
+                                ff_nvtegra_map_get_addr(map), ff_nvtegra_map_get_size(map));
+    }
+
+    return 0;
+}
+
+static inline int pack_to_fixed_point(float val, bool sign, int integer, int fractional) {
     return (int)(val * (1 << fractional) + 0.5f) &
         ((1 << sign + integer + fractional) - 1);
 }
@@ -686,16 +797,22 @@ static void set_matrix_struct(VicMatrixStruct *dst, float src[3][4],
     dst->matrix_coeff23 = (int)(src[2][3] * 0x3ff00 + 0.5f);
 }
 
-static void nvtegra_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, const AVFrame *src,
-                                        enum AVPixelFormat fmt, bool is_10b_chroma)
+static void nvtegra_vic_preprare_config(VicConfigStruct *config, const AVFrame *src, const AVFrame *dst,
+                                        enum AVPixelFormat fmt, bool is_16b_chroma)
 {
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
-    AVNVTegraMap *input_map = ff_nvtegra_frame_get_fbuf_map(src);
+    bool input_linear = (src->format != AV_PIX_FMT_NVTEGRA) || ff_nvtegra_frame_get_fbuf_map(src)->is_linear,
+        output_linear = (dst->format != AV_PIX_FMT_NVTEGRA) || ff_nvtegra_frame_get_fbuf_map(dst)->is_linear;
 
-    /* Subsampled dimensions when emulating 10B chroma transfers, as input is always NV12 */
-    int divider = (!is_10b_chroma ? 1 : 2);
-    int src_width = src->width / divider, src_height = src->height / divider;
-    int dst_width = dst->width / divider, dst_height = dst->height / divider;
+    /*
+     * The VIC engine has an undocumented limitation regarding height alignment,
+     * which should be padded to an even size.
+     */
+
+    /* Subsampled dimensions when emulating 16-bit chroma transfers, as input is always NV12 */
+    int divider   = !is_16b_chroma ? 1 : 2;
+    int src_width = src->width / divider, src_height = FFALIGN(src->height, 2) / divider,
+        dst_width = dst->width / divider, dst_height = FFALIGN(dst->height, 2) / divider;
 
     *config = (VicConfigStruct){
         .pipeConfig = {
@@ -703,7 +820,7 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, c
             .DownsampleVert             = 1 << 2, /* U9.2 */
         },
         .outputConfig = {
-            .AlphaFillMode              = !is_10b_chroma ? NVB0B6_DXVAHD_ALPHA_FILL_MODE_OPAQUE :
+            .AlphaFillMode              = !is_16b_chroma ? NVB0B6_DXVAHD_ALPHA_FILL_MODE_OPAQUE :
                                                            NVB0B6_DXVAHD_ALPHA_FILL_MODE_SOURCE_STREAM,
             .BackgroundAlpha            = 0,
             .BackgroundR                = 0,
@@ -718,13 +835,14 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, c
             .OutPixelFormat             = ff_nvtegra_map_vic_pic_fmt(fmt),
             .OutSurfaceWidth            = dst_width  - 1,
             .OutSurfaceHeight           = dst_height - 1,
-            .OutBlkKind                 = NVB0B6_BLK_KIND_PITCH,
+            .OutBlkKind                 = !output_linear ? NVB0B6_BLK_KIND_GENERIC_16Bx2 : NVB0B6_BLK_KIND_PITCH,
+            .OutBlkHeight               = !output_linear ? 1 : 0, /* GOB height 2 */
             .OutLumaWidth               = (dst->linesize[0] / desc->comp[0].step) - 1,
-            .OutLumaHeight              = dst_height - 1,
+            .OutLumaHeight              = FFALIGN(dst_height, !output_linear ? 32 : 2) - 1,
             .OutChromaWidth             = (desc->flags & AV_PIX_FMT_FLAG_RGB) ?
                                           -1 : (dst->linesize[1] / desc->comp[1].step) - 1,
-            .OutChromaHeight            = (desc->flags & AV_PIX_FMT_FLAG_RGB) ?
-                                          -1 : (dst->height >> desc->log2_chroma_h) - 1,
+            .OutChromaHeight            = (desc->flags & AV_PIX_FMT_FLAG_RGB) ? -1 :
+                                          (FFALIGN(dst_height, !output_linear ? 32 : 2) >> desc->log2_chroma_h) - 1,
         },
         .slotStruct = {
             {
@@ -755,18 +873,17 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, c
                                            src->chroma_location == AVCHROMA_LOC_TOP) ? 0 :
                                           (src->chroma_location == AVCHROMA_LOC_LEFT ||
                                            src->chroma_location == AVCHROMA_LOC_CENTER) ? 1 : 2,
-                    .SlotBlkKind        = !input_map->is_linear ?
-                                          NVB0B6_BLK_KIND_GENERIC_16Bx2 : NVB0B6_BLK_KIND_PITCH,
-                    .SlotBlkHeight      = !input_map->is_linear ? 1 : 0, /* GOB height 2 */
-                    .SlotCacheWidth     = !input_map->is_linear ? 1 : 2, /* 32Bx8 for block, 64Bx4 for pitch (as recommended by the TRM) */
+                    .SlotBlkKind        = !input_linear ? NVB0B6_BLK_KIND_GENERIC_16Bx2 : NVB0B6_BLK_KIND_PITCH,
+                    .SlotBlkHeight      = !input_linear ? 1 : 0, /* GOB height 2 */
+                    .SlotCacheWidth     = !input_linear ? 1 : 3, /* 32Bx8 for block, 128Bx2 for pitch */
                     .SlotSurfaceWidth   = src_width  - 1,
                     .SlotSurfaceHeight  = src_height - 1,
                     .SlotLumaWidth      = (src->linesize[0] / desc->comp[0].step) - 1,
-                    .SlotLumaHeight     = src_height - 1,
+                    .SlotLumaHeight     = FFALIGN(src_height, !input_linear ? 32 : 2) - 1,
                     .SlotChromaWidth    = (desc->flags & AV_PIX_FMT_FLAG_RGB) ?
                                           -1 : (src->linesize[1] / desc->comp[1].step) - 1,
-                    .SlotChromaHeight   = (desc->flags & AV_PIX_FMT_FLAG_RGB) ?
-                                          -1 : (src->height >> desc->log2_chroma_h) - 1,
+                    .SlotChromaHeight   = (desc->flags & AV_PIX_FMT_FLAG_RGB) ? -1 :
+                                          (FFALIGN(src_height, !input_linear ? 32 : 2) >> desc->log2_chroma_h) - 1,
                 },
             },
         },
@@ -831,59 +948,82 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, AVFrame *dst, c
     }
 }
 
-static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx, AVNVTegraMap *map,
-                                      uint32_t *map_offsets, int num_comps,
-                                      const AVFrame *src, enum AVPixelFormat fmt)
+static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx,
+                                      const AVFrame *src, const AVFrame *dst, enum AVPixelFormat fmt,
+                                      AVNVTegraMap **plane_maps, uint32_t *plane_offsets, int num_planes)
 {
     AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
     NVTegraDevicePriv       *priv = ctx->device_ctx->internal->priv;
 
     AVNVTegraCmdbuf *cmdbuf = &priv->vic_cmdbuf;
 
-    AVNVTegraMap *src_map;
-    int input_reloc_type, err;
+    AVNVTegraMap *src_maps[4], *dst_maps[4];
+    uint32_t src_map_offsets[4], dst_map_offsets[4];
+    int src_reloc_type, dst_reloc_type, i, err;
 
-    src_map = ff_nvtegra_frame_get_fbuf_map(src);
+#define RELOC_VARS(frame) ({                                                             \
+    if (frame->format == AV_PIX_FMT_NVTEGRA) {                                           \
+        for (i = 0; i < FF_ARRAY_ELEMS(AV_JOIN(frame, _map_offsets)); ++i) {             \
+            AV_JOIN(frame, _maps       )[i] = ff_nvtegra_frame_get_fbuf_map(frame);      \
+            AV_JOIN(frame, _map_offsets)[i] = frame->data[i] - frame->data[0];           \
+        }                                                                                \
+        AV_JOIN(frame, _reloc_type) = !ff_nvtegra_frame_get_fbuf_map(frame)->is_linear ? \
+            NVHOST_RELOC_TYPE_BLOCK_LINEAR : NVHOST_RELOC_TYPE_PITCH_LINEAR;             \
+    } else {                                                                             \
+        for (i = 0; i < FF_ARRAY_ELEMS(AV_JOIN(frame, _map_offsets)); ++i) {             \
+            AV_JOIN(frame, _maps       )[i] = plane_maps   [i];                          \
+            AV_JOIN(frame, _map_offsets)[i] = plane_offsets[i];                          \
+        }                                                                                \
+        AV_JOIN(frame, _reloc_type) = NVHOST_RELOC_TYPE_PITCH_LINEAR;                    \
+    }                                                                                    \
+})
 
-    input_reloc_type = !src_map->is_linear ?
-                       NVHOST_RELOC_TYPE_BLOCK_LINEAR : NVHOST_RELOC_TYPE_PITCH_LINEAR;
+    RELOC_VARS(src);
+    RELOC_VARS(dst);
 
     err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_VIC);
     if (err < 0)
         return err;
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_APPLICATION_ID,
-                          FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_APPLICATION_ID, ID, 1));
     FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS,
                           FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, CONFIG_STRUCT_SIZE, sizeof(VicConfigStruct) >> 4) |
-                          FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, GPTIMER_ON,         1));
+                          FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, GPTIMER_ON,         1)                            |
+                          FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, FALCON_CONTROL,     1));
     FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONFIG_STRUCT_OFFSET,
                           &priv->vic_map, priv->vic_setup_off,  NVHOST_RELOC_TYPE_DEFAULT);
     FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_FILTER_STRUCT_OFFSET,
                           &priv->vic_map, priv->vic_filter_off, NVHOST_RELOC_TYPE_DEFAULT);
 
-    for (int i = 0; i < num_comps; ++i)
-        FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET + i * sizeof(uint32_t),
-                              map, map_offsets[i], NVHOST_RELOC_TYPE_PITCH_LINEAR);
-
     switch (fmt) {
+        /* 16-bit transfer emulation */
         case AV_PIX_FMT_RGB565:
-            /* 16-bit luma transfer */
+            /* Luma transfer */
             FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
-                                  src_map, 0, input_reloc_type);
+                                  src_maps[0], src_map_offsets[0], src_reloc_type);
+            FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET,
+                                  dst_maps[0], dst_map_offsets[0], dst_reloc_type);
             break;
         case AV_PIX_FMT_RGB32:
-            /* 16-bit chroma transfer */
+            /* Chroma transfer */
             FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
-                                  src_map, src->data[1] - src->data[0], input_reloc_type);
+                                  src_maps[1], src_map_offsets[1], src_reloc_type);
+            FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET,
+                                  dst_maps[1], dst_map_offsets[1], dst_reloc_type);
             break;
+
+        /* Normal transfers */
+        case AV_PIX_FMT_GRAY8:
         case AV_PIX_FMT_NV12:
-            /* Normal transfer */
-            FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
-                                  src_map, 0, input_reloc_type);
-            FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_CHROMA_U_OFFSET(0),
-                                  src_map, src->data[1] - src->data[0], input_reloc_type);
+        case AV_PIX_FMT_YUV420P:
+            for (i = 0; i < num_planes; ++i) {
+                FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0)    + i * sizeof(uint32_t),
+                                      src_maps[i], src_map_offsets[i], src_reloc_type);
+                FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET + i * sizeof(uint32_t),
+                                      dst_maps[i], dst_map_offsets[i], dst_reloc_type);
+            }
             break;
+        default:
+            return AVERROR(EINVAL);
     }
 
     FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_EXECUTE,
@@ -919,9 +1059,9 @@ static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx, AVNVTegraMap *map,
     return 0;
 }
 
-static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src,
-                                     enum AVPixelFormat fmt, AVNVTegraMap *map, uint32_t *plane_offsets,
-                                     int num_planes, bool is_chroma)
+static int nvtegra_vic_copy_plane(AVHWFramesContext *ctx, const AVFrame *src, const AVFrame *dst,
+                                  enum AVPixelFormat fmt, AVNVTegraMap **plane_maps, uint32_t *plane_offsets,
+                                  int num_planes, bool is_chroma)
 {
     AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
     NVTegraDevicePriv       *priv = ctx->device_ctx->internal->priv;
@@ -934,13 +1074,13 @@ static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const
     mem = ff_nvtegra_map_get_addr(&priv->vic_map);
 
     nvtegra_vic_preprare_config((VicConfigStruct *)(mem + priv->vic_setup_off),
-                                dst, src, fmt, is_chroma);
+                                src, dst, fmt, is_chroma);
 
     err = ff_nvtegra_cmdbuf_clear(cmdbuf);
     if (err < 0)
         return err;
 
-    err = nvtegra_vic_prepare_cmdbuf(ctx, map, plane_offsets, num_planes, src, fmt);
+    err = nvtegra_vic_prepare_cmdbuf(ctx, src, dst, fmt, plane_maps, plane_offsets, num_planes);
     if (err < 0)
         goto fail;
 
@@ -956,164 +1096,125 @@ fail:
     return err;
 }
 
-static void nvtegra_unswizzle_nvdec_surf(void *out, int out_stride, void *in, int in_stride, int h) {
-    /*
-     * Adapted from https://fgiesen.wordpress.com/2011/01/17/texture-tiling-and-swizzling/.
-     * We process 16x2 bytes at a time. Horizontally, this is the size of a linear atom
-     * in a 16Bx2 sector, conveniently also the size of a cache line.
-     * The input pitch is guaranteed to fulfill this condition because of GOB alignment.
-     *
-     * NVDEC always uses a GOB height of 2 (block height of 16, in line with macroblock dimensions).
-     * The corresponding swizzling pattern is the following:
-     *    y3 y2 y1 y0 x5 x4 x3 x2 x1 x0
-     * x: ___x5_______x4____x3 x3 x1 x0
-     * y: y3____y2 y1____y0____________
-     *
-     * Addresses for the 4 lower bits can then be copied as-is (16 bytes).
-     * As a further optimization, the y0 bit is also handled within the same inner loop,
-     * which halves the total number of iterations.
-     */
-
-    __uint128_t *src = in, *dst = out, *src_line, *dst_line;
-    uint32_t w = out_stride / 16, offs_x = 0, offs_y = 0, offs_line;
-    uint32_t x_mask = -0x2e, y_mask = 0x2c;
-    int x, y;
-
-    for (y = 0; y < h; y += 2) {
-        dst_line = dst + y * w;
-        src_line = src + offs_y;
-
-        offs_line = offs_x;
-        for (x = 0; x < w; ++x) {
-            dst_line[x+0] = src_line[offs_line+0];
-            dst_line[x+w] = src_line[offs_line+1];
-            offs_line = (offs_line - x_mask) & x_mask;
-        }
-
-        offs_y = (offs_y - y_mask) & y_mask;
-
-        /* Wrap into next tile row */
-        if (!offs_y)
-            offs_x += in_stride;
-    }
-}
-
-static int nvtegra_cpu_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src) {
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(ctx->sw_format);
-    AVNVTegraMap *src_map;
-    int i;
-
-    src_map = ff_nvtegra_frame_get_fbuf_map(src);
-
-    if (dst->format != ctx->sw_format) {
-        av_log(ctx, AV_LOG_WARNING, "Source and destination must have the same format for cpu transfers\n");
-        return AVERROR(EINVAL);
-    }
-
-    for (i = 0; i < av_pix_fmt_count_planes(dst->format); ++i) {
-        if (src_map->is_linear)
-            av_image_copy_plane(dst->data[i], dst->linesize[i], src->data[i], src->linesize[i],
-                                FFMIN(dst->linesize[i], src->linesize[i]),
-                                dst->height >> (i ? desc->log2_chroma_h : 0));
-        else
-            nvtegra_unswizzle_nvdec_surf(dst->data[i], dst->linesize[i], src->data[i], src->linesize[i],
-                                         dst->height >> (i ? desc->log2_chroma_h : 0));
-    }
-
-    return 0;
-}
-
-static int nvtegra_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src) {
+static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst, const AVFrame *src,
+                                     int num_planes, bool from)
+{
 #ifdef __SWITCH__
     AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
 #endif
 
-    AVNVTegraMap map = {0};
-    uint8_t *map_base;
+    const AVFrame *swframe;
+    uint8_t *map_bases[4];
+    AVNVTegraMap maps[4] = {0};
+    AVNVTegraMap *plane_maps[4];
     uint32_t plane_offsets[4];
-    int num_planes, i;
-    int err;
+    int num_maps, i, j, err;
 
-    av_log(ctx, AV_LOG_DEBUG, "Transferring data from NVTEGRA device, %s -> %s\n",
-           av_get_pix_fmt_name(src->format), av_get_pix_fmt_name(dst->format));
+    swframe = from ? dst : src;
 
-    if (((uintptr_t)dst->data[0] & 0xff) || ((uintptr_t)dst->data[1] & 0xff) || (dst->linesize[0] & 0xff)) {
-        av_log(ctx, AV_LOG_WARNING, "Destination address/pitch not aligned to 256, "
-                                    "falling back to slower cpu transfer\n");
-        return nvtegra_cpu_transfer_data(ctx, dst, src);
+    /* Create a map for each frame backing buffer */
+    for (i = 0; i < FF_ARRAY_ELEMS(maps); num_maps = ++i) {
+        if (!swframe->buf[i])
+            break;
+
+        /*
+         * In order to avoid a full-frame copy on the CPU, the provided memory
+         * is mapped into VIC and used directly during the transfer.
+         * The address and size are aligned to page boundaries.
+         * Cache management is performed manually to not affect data outside the buffer.
+         */
+#ifdef __SWITCH__
+        maps[i].owner = hwctx->vic_channel.channel.fd;
+#endif
+        map_bases[i] = (uint8_t *)((uintptr_t)swframe->buf[i]->data & ~0xfff);
+        err = ff_nvtegra_map_from_va(&maps[i], map_bases[i],
+                                     swframe->buf[i]->size + ((uintptr_t)swframe->buf[i]->data & 0xfff),
+                                     0x100, NVMAP_HANDLE_CACHEABLE);
+        if (err < 0)
+            goto fail;
+
+        err = ff_nvtegra_map_map(&maps[i]);
+        if (err < 0)
+            goto fail;
+
+        /* Flush-invalidate the CPU cache prior to the transfer */
+        ff_nvtegra_map_cache_op(&maps[i], NVMAP_CACHE_OP_WB_INV,
+                                ((uint8_t *)ff_nvtegra_map_get_addr(&maps[i])) +
+                                    ((uintptr_t)swframe->buf[i]->data & 0xfff),
+                                swframe->buf[i]->size);
     }
 
-    if (!src->hw_frames_ctx || dst->hw_frames_ctx)
-        return AVERROR(ENOSYS);
+    /* Find the corresponding map object and its offset for each plane  */
+    for (i = 0; i < num_planes; ++i) {
+        for (j = 0; j < FF_ARRAY_ELEMS(swframe->buf); ++j) {
+            if ((swframe->buf[j]->data <= swframe->data[i]) &&
+                    (swframe->data[i] < swframe->buf[j]->data + swframe->buf[j]->size))
+                break;
+        }
 
-    /*
-     * HOS specific optimization: the frame buffer is directly used as backbuffer for VIC
-     * Doing this on linux with NVMAP_IOC_FROM_VA leads to issues that seem to be related to cache
-     * (syncpt is signalled when the buffer is still partially empty)
-     * Making the map cpu uncacheable leads to heap corruption (due to overlap with other heap blocks?)
-     */
-#ifndef __SWITCH__
-    map_base = dst->data[0];
-    err = ff_nvtegra_map_allocate(&map, dst->buf[0]->size, 0x100, NVMAP_CACHE_OP_INV);
-    if (err < 0)
-        goto fail;
-#else
-    map.owner = hwctx->vic_channel.channel.fd;
-    map_base = (uint8_t *)((uintptr_t)dst->buf[0]->data & ~0xfff);
-    err = ff_nvtegra_map_from_va(&map, map_base, dst->buf[0]->size + ((uintptr_t)dst->buf[0]->data & 0xfff),
-                                 0x100, NVMAP_CACHE_OP_WB);
-    if (err < 0)
-        goto fail;
-#endif
-
-    err = ff_nvtegra_map_map(&map);
-    if (err < 0)
-        goto fail;
-
-    num_planes = av_pix_fmt_count_planes(dst->format);
-    for (i = 0; i < num_planes; ++i)
-        plane_offsets[i] = (uintptr_t)(dst->data[i] - map_base);
+        plane_maps   [i] = &maps[j];
+        plane_offsets[i] = swframe->data[i] - map_bases[j];
+    }
 
     /* VIC expects planes in the reversed order */
-    if (dst->format == AV_PIX_FMT_YUV420P)
-        FFSWAP(uint32_t, plane_offsets[1], plane_offsets[2]);
+    if (swframe->format == AV_PIX_FMT_YUV420P) {
+        FFSWAP(AVNVTegraMap *, plane_maps   [1], plane_maps   [2]);
+        FFSWAP(uint32_t,       plane_offsets[1], plane_offsets[2]);
+    }
 
     /*
-     * VIC2 does not support 16-bit YUV surfaces.
+     * VIC2 does not support 16-bit YUV surfaces (eg. P010, P012, ...).
      * Here we emulate them using two separates transfers for the luma and chroma planes
      * (16-bit and 32-bit widths respectively).
      */
-    if (dst->format == AV_PIX_FMT_P010) {
-        err = nvtegra_vic_transfer_data(ctx, dst, src, AV_PIX_FMT_RGB565,
-                                        &map, &plane_offsets[0], 1, false);
+    if (swframe->format == AV_PIX_FMT_P010) {
+        err = nvtegra_vic_copy_plane(ctx, src, dst, AV_PIX_FMT_RGB565,
+                                     plane_maps, plane_offsets, 1, false);
         if (err < 0)
             goto fail;
 
-        err = nvtegra_vic_transfer_data(ctx, dst, src, AV_PIX_FMT_RGB32,
-                                        &map, &plane_offsets[1], 1, true);
+        err = nvtegra_vic_copy_plane(ctx, src, dst, AV_PIX_FMT_RGB32,
+                                     plane_maps, plane_offsets, 1, true);
         if (err < 0)
             goto fail;
     } else {
-        err = nvtegra_vic_transfer_data(ctx, dst, src, dst->format,
-                                        &map, plane_offsets, num_planes, false);
+        err = nvtegra_vic_copy_plane(ctx, src, dst, swframe->format,
+                                     plane_maps, plane_offsets, num_planes, false);
         if (err < 0)
             goto fail;
     }
 
-#ifndef __SWITCH__
-    memcpy(dst->buf[0]->data, ff_nvtegra_map_get_addr(&map), dst->buf[0]->size);
-#endif
-
 fail:
-    ff_nvtegra_map_unmap(&map);
-
-#ifndef __SWITCH__
-    ff_nvtegra_map_free(&map);
-#else
-    ff_nvtegra_map_close(&map);
-#endif
+    for (i = 0; i < num_maps; ++i) {
+        ff_nvtegra_map_unmap(&maps[i]);
+        ff_nvtegra_map_close(&maps[i]);
+    }
 
     return err;
+}
+
+static int nvtegra_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVFrame *src) {
+    const AVFrame *swframe;
+    bool from;
+    int num_planes, i;
+
+    from    = !dst->hw_frames_ctx;
+    swframe = from ? dst : src;
+
+    if (swframe->hw_frames_ctx)
+        return AVERROR(ENOSYS);
+
+    num_planes = av_pix_fmt_count_planes(swframe->format);
+
+    for (i = 0; i < num_planes; ++i) {
+        if (((uintptr_t)swframe->data[i] & 0xff) || (swframe->linesize[i] & 0xff)) {
+            av_log(ctx, AV_LOG_WARNING, "Frame address/pitch not aligned to 256, "
+                                        "falling back to cpu transfer\n");
+            return nvtegra_cpu_transfer_data(ctx, dst, src, num_planes, from);
+        }
+    }
+
+    return nvtegra_vic_transfer_data(ctx, dst, src, num_planes, from);
 }
 
 const HWContextType ff_hwcontext_type_nvtegra = {
@@ -1137,7 +1238,8 @@ const HWContextType ff_hwcontext_type_nvtegra = {
     .frames_get_buffer      = &nvtegra_get_buffer,
 
     .transfer_get_formats   = &nvtegra_transfer_get_formats,
-    .transfer_data_from     = &nvtegra_transfer_data_from,
+    .transfer_data_to       = &nvtegra_transfer_data,
+    .transfer_data_from     = &nvtegra_transfer_data,
 
     .pix_fmts = (const enum AVPixelFormat[]) {
         AV_PIX_FMT_NVTEGRA,
