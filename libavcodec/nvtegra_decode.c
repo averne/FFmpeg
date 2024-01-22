@@ -262,7 +262,7 @@ int ff_nvtegra_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     NVTegraFrame          *tf = fdd->hwaccel_priv;
     AVNVTegraMap   *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
-    bool need_bitstream_move;
+    bool need_bitstream_move = false;
     uint32_t old_bitstream_off, startcode_size;
     uint8_t *mem;
     int err;
