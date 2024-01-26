@@ -68,7 +68,7 @@ static int nvtegra_h264_decode_uninit(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Deinitializing NVTEGRA H264 decoder\n");
 
-    err = ff_nvtegra_map_destroy(&ctx->common_map);
+    err = av_nvtegra_map_destroy(&ctx->common_map);
     if (err < 0)
         return err;
 
@@ -105,13 +105,13 @@ static int nvtegra_h264_decode_init(AVCodecContext *avctx) {
     /* Ignored: histogram map, size 0x400 */
     ctx->core.pic_setup_off     = 0;
     ctx->core.status_off        = FFALIGN(ctx->core.pic_setup_off     + sizeof(nvdec_h264_pic_s),
-                                          FF_NVTEGRA_MAP_ALIGN);
+                                          AV_NVTEGRA_MAP_ALIGN);
     ctx->core.cmdbuf_off        = FFALIGN(ctx->core.status_off        + sizeof(nvdec_status_s),
-                                          FF_NVTEGRA_MAP_ALIGN);
-    ctx->core.slice_offsets_off = FFALIGN(ctx->core.cmdbuf_off        + 3*FF_NVTEGRA_MAP_ALIGN,
-                                          FF_NVTEGRA_MAP_ALIGN);
+                                          AV_NVTEGRA_MAP_ALIGN);
+    ctx->core.slice_offsets_off = FFALIGN(ctx->core.cmdbuf_off        + 3*AV_NVTEGRA_MAP_ALIGN,
+                                          AV_NVTEGRA_MAP_ALIGN);
     ctx->core.bitstream_off     = FFALIGN(ctx->core.slice_offsets_off + num_slices * sizeof(uint32_t),
-                                          FF_NVTEGRA_MAP_ALIGN);
+                                          AV_NVTEGRA_MAP_ALIGN);
     ctx->core.input_map_size    = FFALIGN(ctx->core.bitstream_off     + ff_nvtegra_decode_pick_bitstream_buffer_size(avctx),
                                           0x1000);
 
@@ -129,8 +129,8 @@ static int nvtegra_h264_decode_init(AVCodecContext *avctx) {
     history_size = FFALIGN(width_in_mbs * 0x200 + 0x1100, 0x200);
 
     ctx->coloc_off   = 0;
-    ctx->mbhist_off  = FFALIGN(ctx->coloc_off   + coloc_size,   FF_NVTEGRA_MAP_ALIGN);
-    ctx->history_off = FFALIGN(ctx->mbhist_off  + mbhist_size,  FF_NVTEGRA_MAP_ALIGN);
+    ctx->mbhist_off  = FFALIGN(ctx->coloc_off   + coloc_size,   AV_NVTEGRA_MAP_ALIGN);
+    ctx->history_off = FFALIGN(ctx->mbhist_off  + mbhist_size,  AV_NVTEGRA_MAP_ALIGN);
     common_map_size  = FFALIGN(ctx->history_off + history_size, 0x1000);
 
 #ifdef __SWITCH__
@@ -140,7 +140,7 @@ static int nvtegra_h264_decode_init(AVCodecContext *avctx) {
     ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
 #endif
 
-    err = ff_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
+    err = av_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;
@@ -283,7 +283,7 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
             continue;
 
         for (j = 0; j < dpb_size; ++j) {
-            if (ff_nvtegra_frame_get_fbuf_map(refs[j]->f) == ctx->refs[i].map)
+            if (av_nvtegra_frame_get_fbuf_map(refs[j]->f) == ctx->refs[i].map)
                 break;
         }
 
@@ -323,7 +323,7 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
     }
 
     /* In the case of interlaced video, the new frame can be the same as the last */
-    if (ctx->refs[ctx->cur_frame].map != ff_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f)) {
+    if (ctx->refs[ctx->cur_frame].map != av_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f)) {
         /* Allocate a pic id for the current frame */
         i = find_slot(&ctx->pic_id_mask);
 
@@ -331,7 +331,7 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         ctx->cur_frame = find_slot(&ctx->refs_mask);
         ctx->pic_id_map[i] = ctx->cur_frame;
         ctx->refs[ctx->cur_frame] = (struct NVTegraH264RefFrame){
-            .map        = ff_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f),
+            .map        = av_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f),
             .chroma_off = h->cur_pic_ptr->f->data[1] - h->cur_pic_ptr->f->data[0],
             .frame_num  = h->cur_pic_ptr->frame_num,
             .pic_id     = i,
@@ -372,39 +372,39 @@ static int nvtegra_h264_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, H264Context *h,
 
     int err, i;
 
-    err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
+    err = av_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
     if (err < 0)
         return err;
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
-                          FF_NVTEGRA_ENUM(NVC5B0_SET_APPLICATION_ID, ID, H264));
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                          FF_NVTEGRA_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     H264) |
-                          FF_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1)    |
-                          FF_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
-                          FF_NVTEGRA_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
+                          AV_NVTEGRA_ENUM(NVC5B0_SET_APPLICATION_ID, ID, H264));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
+                          AV_NVTEGRA_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     H264) |
+                          AV_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1)    |
+                          AV_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
+                          AV_NVTEGRA_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
                           input_map,        ctx->core.pic_setup_off,     NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
                           input_map,        ctx->core.bitstream_off,     NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_SLICE_OFFSETS_BUF_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_SLICE_OFFSETS_BUF_OFFSET,
                           input_map,        ctx->core.slice_offsets_off, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
                           input_map,        ctx->core.status_off,        NVHOST_RELOC_TYPE_DEFAULT);
 
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_COLOC_DATA_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_COLOC_DATA_OFFSET,
                           &ctx->common_map, ctx->coloc_off,              NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_H264_SET_MBHIST_BUF_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_H264_SET_MBHIST_BUF_OFFSET,
                           &ctx->common_map, ctx->mbhist_off,             NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_HISTORY_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_HISTORY_OFFSET,
                           &ctx->common_map, ctx->history_off,            NVHOST_RELOC_TYPE_DEFAULT);
 
 #define PUSH_FRAME(ref, offset) ({                                                \
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4, \
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4, \
                           ref.map, 0, NVHOST_RELOC_TYPE_DEFAULT);                 \
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4, \
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4, \
                           ref.map, ref.chroma_off, NVHOST_RELOC_TYPE_DEFAULT);    \
 })
 
@@ -417,10 +417,10 @@ static int nvtegra_h264_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, H264Context *h,
             PUSH_FRAME(ctx->refs[ctx->scratch_ref], i);
     }
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
-                          FF_NVTEGRA_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
+                          AV_NVTEGRA_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
 
-    err = ff_nvtegra_cmdbuf_end(cmdbuf);
+    err = av_nvtegra_cmdbuf_end(cmdbuf);
     if (err < 0)
         return err;
 
@@ -447,7 +447,7 @@ static int nvtegra_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
 
     tf = fdd->hwaccel_priv;
     input_map = (AVNVTegraMap *)tf->input_map_ref->data;
-    mem = ff_nvtegra_map_get_addr(input_map);
+    mem = av_nvtegra_map_get_addr(input_map);
 
     nvtegra_h264_prepare_frame_setup((nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
 
@@ -471,7 +471,7 @@ static int nvtegra_h264_end_frame(AVCodecContext *avctx) {
     if (!tf || !ctx->core.num_slices)
         return 0;
 
-    mem = ff_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
+    mem = av_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
 
     setup = (nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off);
     setup->stream_len  = ctx->core.bitstream_len + sizeof(bitstream_end_sequence);

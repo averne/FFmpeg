@@ -45,20 +45,20 @@ typedef struct AVNVTegraDeviceContext {
     bool has_nvdec, has_nvjpg;
 } AVNVTegraDeviceContext;
 
-static inline AVNVTegraMap *ff_nvtegra_frame_get_fbuf_map(const AVFrame *frame) {
+static inline AVNVTegraMap *av_nvtegra_frame_get_fbuf_map(const AVFrame *frame) {
     return (AVNVTegraMap *)frame->buf[0]->data;
 }
 
 /*
  * Helper to retrieve a map object from the corresponding frame
  */
-int ff_nvtegra_map_vic_pic_fmt(enum AVPixelFormat fmt);
+int av_nvtegra_map_vic_pic_fmt(enum AVPixelFormat fmt);
 
 /*
  * Dynamic frequency scaling routines
  */
-int ff_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int width, int height, double framerate_hz);
-int ff_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int bitstream_len, int decode_cycles);
-int ff_nvtegra_dfs_uninit(AVHWDeviceContext *ctx, AVNVTegraChannel *channel);
+int av_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int width, int height, double framerate_hz);
+int av_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int bitstream_len, int decode_cycles);
+int av_nvtegra_dfs_uninit(AVHWDeviceContext *ctx, AVNVTegraChannel *channel);
 
 #endif /* AVUTIL_HWCONTEXT_NVTEGRA_H */

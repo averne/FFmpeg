@@ -64,7 +64,7 @@ static int nvtegra_hevc_decode_uninit(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Deinitializing NVTEGRA HEVC decoder\n");
 
-    err = ff_nvtegra_map_destroy(&ctx->common_map);
+    err = av_nvtegra_map_destroy(&ctx->common_map);
     if (err < 0)
         return err;
 
@@ -90,15 +90,15 @@ static int nvtegra_hevc_decode_init(AVCodecContext *avctx) {
 
     ctx->core.pic_setup_off  = 0;
     ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp8_pic_s),
-                                       FF_NVTEGRA_MAP_ALIGN);
+                                       AV_NVTEGRA_MAP_ALIGN);
     ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
-                                       FF_NVTEGRA_MAP_ALIGN);
-    ctx->tile_sizes_off      = FFALIGN(ctx->core.cmdbuf_off    + 3*FF_NVTEGRA_MAP_ALIGN,
-                                       FF_NVTEGRA_MAP_ALIGN);
+                                       AV_NVTEGRA_MAP_ALIGN);
+    ctx->tile_sizes_off      = FFALIGN(ctx->core.cmdbuf_off    + 3*AV_NVTEGRA_MAP_ALIGN,
+                                       AV_NVTEGRA_MAP_ALIGN);
     ctx->scaling_list_off    = FFALIGN(ctx->tile_sizes_off     + 0x900,
-                                       FF_NVTEGRA_MAP_ALIGN);
+                                       AV_NVTEGRA_MAP_ALIGN);
     ctx->core.bitstream_off  = FFALIGN(ctx->scaling_list_off   + 0x400,
-                                       FF_NVTEGRA_MAP_ALIGN);
+                                       AV_NVTEGRA_MAP_ALIGN);
     ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_nvtegra_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
@@ -115,7 +115,7 @@ static int nvtegra_hevc_decode_init(AVCodecContext *avctx) {
     filter_buffer_size = (FILTER_SIZE + SAO_SIZE + BSD_SIZE) * aligned_height;
 
     ctx->coloc_off  = 0;
-    ctx->filter_off = FFALIGN(ctx->coloc_off  + coloc_size,         FF_NVTEGRA_MAP_ALIGN);
+    ctx->filter_off = FFALIGN(ctx->coloc_off  + coloc_size,         AV_NVTEGRA_MAP_ALIGN);
     common_map_size = FFALIGN(ctx->filter_off + filter_buffer_size, 0x1000);
 
 #ifdef __SWITCH__
@@ -125,7 +125,7 @@ static int nvtegra_hevc_decode_init(AVCodecContext *avctx) {
     ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
 #endif
 
-    err = ff_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
+    err = av_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;
@@ -216,7 +216,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     uint8_t rps_stcurrbef[8], rps_stcurraft[8], rps_ltcurr[8];
     uint8_t dpb_to_ordered_map[FF_ARRAY_ELEMS(s->DPB)];
 
-    mem = ff_nvtegra_map_get_addr(input_map);
+    mem = av_nvtegra_map_get_addr(input_map);
 
     /* Enable 10-bit output if asked for regardless of colorspace */
     /* TODO: Dithered down 8-bit decoding (needs DISPLAY_BUF stuff) */
@@ -341,8 +341,8 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         if (ctx->ordered_dpb[i]) {
             for (j = 0; j < FF_ARRAY_ELEMS(s->DPB); ++j) {
                 if (ctx->ordered_dpb[i]->buf[0] && s->DPB[j].frame->buf[0] &&
-                        ff_nvtegra_frame_get_fbuf_map(ctx->ordered_dpb[i]) ==
-                        ff_nvtegra_frame_get_fbuf_map(s->DPB[j].frame))
+                        av_nvtegra_frame_get_fbuf_map(ctx->ordered_dpb[i]) ==
+                        av_nvtegra_frame_get_fbuf_map(s->DPB[j].frame))
                     break;
             }
 
@@ -386,8 +386,8 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     ctx->scratch_ref = NULL;
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->ordered_dpb); ++i) {
         if (ctx->ordered_dpb[i] &&
-                ff_nvtegra_frame_get_fbuf_map(ctx->ordered_dpb[i]) !=
-                ff_nvtegra_frame_get_fbuf_map(s->frame)) {
+                av_nvtegra_frame_get_fbuf_map(ctx->ordered_dpb[i]) !=
+                av_nvtegra_frame_get_fbuf_map(s->frame)) {
             ctx->scratch_ref = ctx->ordered_dpb[i];
             ref_diff_poc     = setup->RefDiffPicOrderCnts[i];
             break;
@@ -465,40 +465,40 @@ static int nvtegra_hevc_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, HEVCContext *s,
     int i;
     int err;
 
-    err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
+    err = av_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
     if (err < 0)
         return err;
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
-                          FF_NVTEGRA_ENUM(NVC5B0_SET_APPLICATION_ID, ID, HEVC));
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
-                          FF_NVTEGRA_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     HEVC) |
-                          FF_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1)    |
-                          FF_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
-                          FF_NVTEGRA_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_APPLICATION_ID,
+                          AV_NVTEGRA_ENUM(NVC5B0_SET_APPLICATION_ID, ID, HEVC));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_CONTROL_PARAMS,
+                          AV_NVTEGRA_ENUM (NVC5B0_SET_CONTROL_PARAMS, CODEC_TYPE,     HEVC) |
+                          AV_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, ERR_CONCEAL_ON, 1)    |
+                          AV_NVTEGRA_VALUE(NVC5B0_SET_CONTROL_PARAMS, GPTIMER_ON,     1));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_SET_PICTURE_INDEX,
+                          AV_NVTEGRA_VALUE(NVC5B0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DRV_PIC_SETUP_OFFSET,
                           input_map,        ctx->core.pic_setup_off, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_IN_BUF_BASE_OFFSET,
                           input_map,        ctx->core.bitstream_off, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_NVDEC_STATUS_OFFSET,
                           input_map,        ctx->core.status_off,    NVHOST_RELOC_TYPE_DEFAULT);
 
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_HEVC_SET_SCALING_LIST_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_HEVC_SET_SCALING_LIST_OFFSET,
                           input_map,        ctx->scaling_list_off,   NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_HEVC_SET_TILE_SIZES_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_HEVC_SET_TILE_SIZES_OFFSET,
                           input_map,        ctx->tile_sizes_off,     NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_HEVC_SET_FILTER_BUFFER_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_HEVC_SET_FILTER_BUFFER_OFFSET,
                           &ctx->common_map, ctx->filter_off,         NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_COLOC_DATA_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_COLOC_DATA_OFFSET,
                           &ctx->common_map, ctx->coloc_off,          NVHOST_RELOC_TYPE_DEFAULT);
 
 #define PUSH_FRAME(fr, offset) ({                                                           \
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,           \
-                          ff_nvtegra_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,           \
-                          ff_nvtegra_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,           \
+                          av_nvtegra_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,           \
+                          av_nvtegra_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
                           NVHOST_RELOC_TYPE_DEFAULT);                                       \
 })
 
@@ -513,19 +513,19 @@ static int nvtegra_hevc_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, HEVCContext *s,
     /*
      * TODO: Dithered down 8-bit decoding
      * if (ctx->last_frame) {
-     *     FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_LUMA_OFFSET,
-     *         ff_nvtegra_frame_get_fbuf_map(ctx->last_frame), 0, NVHOST_RELOC_TYPE_DEFAULT);
-     *     FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_CHROMA_OFFSET,
-     *         ff_nvtegra_frame_get_fbuf_map(ctx->last_frame),
+     *     AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_LUMA_OFFSET,
+     *         av_nvtegra_frame_get_fbuf_map(ctx->last_frame), 0, NVHOST_RELOC_TYPE_DEFAULT);
+     *     AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_DISPLAY_BUF_CHROMA_OFFSET,
+     *         av_nvtegra_frame_get_fbuf_map(ctx->last_frame),
      *         ctx->last_frame->data[1] - ctx->last_frame->data[0],
      *         NVHOST_RELOC_TYPE_DEFAULT);
      * }
      */
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
-                          FF_NVTEGRA_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
+                          AV_NVTEGRA_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
 
-    err = ff_nvtegra_cmdbuf_end(cmdbuf);
+    err = av_nvtegra_cmdbuf_end(cmdbuf);
     if (err < 0)
         return err;
 
@@ -552,7 +552,7 @@ static int nvtegra_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
 
     tf = fdd->hwaccel_priv;
     input_map = (AVNVTegraMap *)tf->input_map_ref->data;
-    mem = ff_nvtegra_map_get_addr(input_map);
+    mem = av_nvtegra_map_get_addr(input_map);
 
     nvtegra_hevc_prepare_frame_setup((nvdec_hevc_pic_s *)(mem + ctx->core.pic_setup_off),
                                      avctx, frame, ctx);
@@ -579,7 +579,7 @@ static int nvtegra_hevc_end_frame(AVCodecContext *avctx) {
     if (!tf || !ctx->core.num_slices)
         return 0;
 
-    mem = ff_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
+    mem = av_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
 
     setup = (nvdec_hevc_pic_s *)(mem + ctx->core.pic_setup_off);
     setup->bitstream_size = ctx->core.bitstream_len;
@@ -603,7 +603,7 @@ static int nvtegra_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
 
     uint8_t *mem;
 
-    mem = ff_nvtegra_map_get_addr(input_map);
+    mem = av_nvtegra_map_get_addr(input_map);
 
     /*
      * Official code adds a 4-byte 00000001 startcode,

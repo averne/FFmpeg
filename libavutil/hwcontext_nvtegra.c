@@ -150,7 +150,7 @@ static const enum AVPixelFormat supported_sw_formats[] = {
     AV_PIX_FMT_YUV420P,
 };
 
-int ff_nvtegra_map_vic_pic_fmt(enum AVPixelFormat fmt) {
+int av_nvtegra_map_vic_pic_fmt(enum AVPixelFormat fmt) {
     switch (fmt) {
         case AV_PIX_FMT_GRAY8:
             return NVB0B6_T_L8;
@@ -206,11 +206,11 @@ static inline uint32_t nvtegra_surface_get_height_align(enum AVPixelFormat fmt, 
 static int nvtegra_channel_set_freq(AVNVTegraChannel *channel, uint32_t freq) {
     int err;
 #ifndef __SWITCH__
-    err = ff_nvtegra_channel_set_clock_rate(channel, channel->module_id, freq);
+    err = av_nvtegra_channel_set_clock_rate(channel, channel->module_id, freq);
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_channel_get_clock_rate(channel, channel->module_id, &channel->clock);
+    err = av_nvtegra_channel_get_clock_rate(channel, channel->module_id, &channel->clock);
     if (err < 0)
         return err;
 #else
@@ -231,25 +231,25 @@ static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
 
     av_log(ctx, AV_LOG_DEBUG, "Deinitializing NVTEGRA device\n");
 
-    ff_nvtegra_cmdbuf_deinit(&priv->vic_cmdbuf);
+    av_nvtegra_cmdbuf_deinit(&priv->vic_cmdbuf);
 
-    ff_nvtegra_map_destroy(&priv->vic_map);
+    av_nvtegra_map_destroy(&priv->vic_map);
 
     if (hwctx->has_nvdec) {
-        ff_nvtegra_channel_close(&hwctx->nvdec_channel);
+        av_nvtegra_channel_close(&hwctx->nvdec_channel);
 #ifdef __SWITCH__
         mmuRequestFinalize(&hwctx->nvdec_channel.mmu_request);
 #endif
     }
 
     if (hwctx->has_nvjpg) {
-        ff_nvtegra_channel_close(&hwctx->nvjpg_channel);
+        av_nvtegra_channel_close(&hwctx->nvjpg_channel);
 #ifdef __SWITCH__
         mmuRequestFinalize(&hwctx->nvjpg_channel.mmu_request);
 #endif
     }
 
-    ff_nvtegra_channel_close(&hwctx->vic_channel);
+    av_nvtegra_channel_close(&hwctx->vic_channel);
 
     av_buffer_unref(&priv->driver_state_ref);
 }
@@ -271,25 +271,25 @@ static int nvtegra_device_init(AVHWDeviceContext *ctx) {
 
     av_log(ctx, AV_LOG_DEBUG, "Initializing NVTEGRA device\n");
 
-    err = ff_nvtegra_channel_open(&hwctx->nvdec_channel, "/dev/nvhost-nvdec");
+    err = av_nvtegra_channel_open(&hwctx->nvdec_channel, "/dev/nvhost-nvdec");
     hwctx->has_nvdec = err == 0;
 
-    err = ff_nvtegra_channel_open(&hwctx->nvjpg_channel, "/dev/nvhost-nvjpg");
+    err = av_nvtegra_channel_open(&hwctx->nvjpg_channel, "/dev/nvhost-nvjpg");
     hwctx->has_nvjpg = err == 0;
 
-    err = ff_nvtegra_channel_open(&hwctx->vic_channel, "/dev/nvhost-vic");
+    err = av_nvtegra_channel_open(&hwctx->vic_channel, "/dev/nvhost-vic");
     if (err < 0)
         goto fail;
 
     /* Note: Official code only sets this for the nvdec channel */
     if (hwctx->has_nvdec) {
-        err = ff_nvtegra_channel_set_submit_timeout(&hwctx->nvdec_channel, 1000);
+        err = av_nvtegra_channel_set_submit_timeout(&hwctx->nvdec_channel, 1000);
         if (err < 0)
             goto fail;
     }
 
     if (hwctx->has_nvjpg) {
-        err = ff_nvtegra_channel_set_submit_timeout(&hwctx->nvjpg_channel, 1000);
+        err = av_nvtegra_channel_set_submit_timeout(&hwctx->nvjpg_channel, 1000);
         if (err < 0)
             goto fail;
     }
@@ -300,24 +300,24 @@ static int nvtegra_device_init(AVHWDeviceContext *ctx) {
 
     priv->vic_setup_off  = 0;
     priv->vic_cmdbuf_off = FFALIGN(priv->vic_setup_off  + sizeof(VicConfigStruct),
-                                   FF_NVTEGRA_MAP_ALIGN);
-    priv->vic_filter_off = FFALIGN(priv->vic_cmdbuf_off + FF_NVTEGRA_MAP_ALIGN,
-                                   FF_NVTEGRA_MAP_ALIGN);
+                                   AV_NVTEGRA_MAP_ALIGN);
+    priv->vic_filter_off = FFALIGN(priv->vic_cmdbuf_off + AV_NVTEGRA_MAP_ALIGN,
+                                   AV_NVTEGRA_MAP_ALIGN);
     vic_map_size         = FFALIGN(priv->vic_filter_off + 0x3000,
                                    0x1000);
 
     priv->vic_max_cmdbuf_size = priv->vic_filter_off - priv->vic_cmdbuf_off;
 
-    err = ff_nvtegra_map_create(&priv->vic_map, vic_map_size, 0x100,
+    err = av_nvtegra_map_create(&priv->vic_map, vic_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;
 
-    err = ff_nvtegra_cmdbuf_init(&priv->vic_cmdbuf);
+    err = av_nvtegra_cmdbuf_init(&priv->vic_cmdbuf);
     if (err < 0)
         goto fail;
 
-    err = ff_nvtegra_cmdbuf_add_memory(&priv->vic_cmdbuf, &priv->vic_map,
+    err = av_nvtegra_cmdbuf_add_memory(&priv->vic_cmdbuf, &priv->vic_map,
                                        priv->vic_cmdbuf_off, priv->vic_max_cmdbuf_size);
     if (err < 0)
         goto fail;
@@ -357,7 +357,7 @@ static int nvtegra_device_create(AVHWDeviceContext *ctx, const char *device,
 
     av_log(ctx, AV_LOG_DEBUG, "Creating NVTEGRA device\n");
 
-    priv->driver_state_ref = ff_nvtegra_driver_init();
+    priv->driver_state_ref = av_nvtegra_driver_init();
     if (!priv->driver_state_ref)
         return AVERROR(ENOSYS);
 
@@ -410,7 +410,7 @@ static void nvtegra_buffer_free(void *opaque, uint8_t *data) {
     if (!data)
         return;
 
-    ff_nvtegra_map_destroy(map);
+    av_nvtegra_map_destroy(map);
 
     av_freep(&map);
 }
@@ -439,14 +439,14 @@ static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
      * Framebuffers are allocated as CPU-cacheable, since they might get copied from
      * during transfer operations. Cache management is done manually.
      */
-    err = ff_nvtegra_map_create(map, size, 0x100,
+    err = av_nvtegra_map_create(map, size, 0x100,
                                 NVMAP_HEAP_CARVEOUT_GENERIC, NVMAP_HANDLE_CACHEABLE);
     if (err < 0)
         goto fail;
 
     /* Flush the CPU cache */
-    ff_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_WB, ff_nvtegra_map_get_addr(map),
-                            ff_nvtegra_map_get_size(map));
+    av_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_WB, av_nvtegra_map_get_addr(map),
+                            av_nvtegra_map_get_size(map));
 
     buffer = av_buffer_create((uint8_t *)map, sizeof(*map), nvtegra_buffer_free, ctx, 0);
     if (!buffer)
@@ -456,7 +456,7 @@ static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
 
 fail:
     av_log(ctx, AV_LOG_ERROR, "Failed to create buffer\n");
-    ff_nvtegra_map_destroy(map);
+    av_nvtegra_map_destroy(map);
     av_freep(map);
     return NULL;
 }
@@ -500,12 +500,12 @@ static int nvtegra_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
     if (!frame->buf[0])
         return AVERROR(ENOMEM);
 
-    map = ff_nvtegra_frame_get_fbuf_map(frame);
+    map = av_nvtegra_frame_get_fbuf_map(frame);
 
     width_aligned  = FFALIGN(ctx->width,  nvtegra_surface_get_width_align (ctx->format, &desc->comp[0]));
     height_aligned = FFALIGN(ctx->height, nvtegra_surface_get_height_align(ctx->format, &desc->comp[0]));
 
-    err = av_image_fill_arrays(frame->data, frame->linesize, ff_nvtegra_map_get_addr(map),
+    err = av_image_fill_arrays(frame->data, frame->linesize, av_nvtegra_map_get_addr(map),
                                ctx->sw_format, width_aligned, height_aligned,
                                nvtegra_surface_get_width_align(ctx->format, &desc->comp[0]));
     if (err < 0)
@@ -529,7 +529,7 @@ static int nvtegra_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
  *   422.4, 441.6, 499.2, 518.4, 537.6, 556.8, 576.0, 595.2, 614.4, 633.6, 652.8
  */
 
-int ff_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int width, int height,
+int av_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int width, int height,
                         double framerate_hz)
 {
     NVTegraDevicePriv *priv = ctx->internal->priv;
@@ -583,7 +583,7 @@ int ff_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int w
     return 0;
 }
 
-int ff_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int bitstream_len, int decode_cycles) {
+int av_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int bitstream_len, int decode_cycles) {
     NVTegraDevicePriv *priv = ctx->internal->priv;
 
     double frame_time, avg;
@@ -649,7 +649,7 @@ int ff_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int
     return err;
 }
 
-int ff_nvtegra_dfs_uninit(AVHWDeviceContext *ctx, AVNVTegraChannel *channel) {
+int av_nvtegra_dfs_uninit(AVHWDeviceContext *ctx, AVNVTegraChannel *channel) {
     return nvtegra_channel_set_freq(channel, 0);
 }
 
@@ -728,7 +728,7 @@ static int nvtegra_cpu_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst,
     int h, i;
 
     hwframe = from ? src : dst, swframe = from ? dst : src;
-    map = ff_nvtegra_frame_get_fbuf_map(hwframe);
+    map = av_nvtegra_frame_get_fbuf_map(hwframe);
 
     if (swframe->format != ctx->sw_format) {
         av_log(ctx, AV_LOG_ERROR, "Source and destination must have the same format for cpu transfers\n");
@@ -737,8 +737,8 @@ static int nvtegra_cpu_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst,
 
     /* If we are transferring from a hardware frame, invalidate the CPU cache which might be stale */
     if (from) {
-        ff_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_INV,
-                                ff_nvtegra_map_get_addr(map), ff_nvtegra_map_get_size(map));
+        av_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_INV,
+                                av_nvtegra_map_get_addr(map), av_nvtegra_map_get_size(map));
     }
 
     /* Align the height to an even size */
@@ -766,8 +766,8 @@ static int nvtegra_cpu_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst,
 
     /* If we transferred to a hardware frame, flush the CPU cache to make the data visible to hardware engines */
     if (!from) {
-        ff_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_WB,
-                                ff_nvtegra_map_get_addr(map), ff_nvtegra_map_get_size(map));
+        av_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_WB,
+                                av_nvtegra_map_get_addr(map), av_nvtegra_map_get_size(map));
     }
 
     return 0;
@@ -801,8 +801,8 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, const AVFrame *
                                         enum AVPixelFormat fmt, bool is_16b_chroma)
 {
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
-    bool input_linear = (src->format != AV_PIX_FMT_NVTEGRA) || ff_nvtegra_frame_get_fbuf_map(src)->is_linear,
-        output_linear = (dst->format != AV_PIX_FMT_NVTEGRA) || ff_nvtegra_frame_get_fbuf_map(dst)->is_linear;
+    bool input_linear = (src->format != AV_PIX_FMT_NVTEGRA) || av_nvtegra_frame_get_fbuf_map(src)->is_linear,
+        output_linear = (dst->format != AV_PIX_FMT_NVTEGRA) || av_nvtegra_frame_get_fbuf_map(dst)->is_linear;
 
     /*
      * The VIC engine has an undocumented limitation regarding height alignment,
@@ -832,7 +832,7 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, const AVFrame *
             .TargetRectBottom           = dst_height - 1,
         },
         .outputSurfaceConfig = {
-            .OutPixelFormat             = ff_nvtegra_map_vic_pic_fmt(fmt),
+            .OutPixelFormat             = av_nvtegra_map_vic_pic_fmt(fmt),
             .OutSurfaceWidth            = dst_width  - 1,
             .OutSurfaceHeight           = dst_height - 1,
             .OutBlkKind                 = !output_linear ? NVB0B6_BLK_KIND_GENERIC_16Bx2 : NVB0B6_BLK_KIND_PITCH,
@@ -863,7 +863,7 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, const AVFrame *
                     .DestRectBottom     = src_height - 1,
                 },
                 .slotSurfaceConfig = {
-                    .SlotPixelFormat    = ff_nvtegra_map_vic_pic_fmt(fmt),
+                    .SlotPixelFormat    = av_nvtegra_map_vic_pic_fmt(fmt),
                     .SlotChromaLocHoriz = ((desc->flags & AV_PIX_FMT_FLAG_RGB)          ||
                                            src->chroma_location == AVCHROMA_LOC_TOPLEFT ||
                                            src->chroma_location == AVCHROMA_LOC_LEFT    ||
@@ -964,10 +964,10 @@ static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx,
 #define RELOC_VARS(frame) ({                                                             \
     if (frame->format == AV_PIX_FMT_NVTEGRA) {                                           \
         for (i = 0; i < FF_ARRAY_ELEMS(AV_JOIN(frame, _map_offsets)); ++i) {             \
-            AV_JOIN(frame, _maps       )[i] = ff_nvtegra_frame_get_fbuf_map(frame);      \
+            AV_JOIN(frame, _maps       )[i] = av_nvtegra_frame_get_fbuf_map(frame);      \
             AV_JOIN(frame, _map_offsets)[i] = frame->data[i] - frame->data[0];           \
         }                                                                                \
-        AV_JOIN(frame, _reloc_type) = !ff_nvtegra_frame_get_fbuf_map(frame)->is_linear ? \
+        AV_JOIN(frame, _reloc_type) = !av_nvtegra_frame_get_fbuf_map(frame)->is_linear ? \
             NVHOST_RELOC_TYPE_BLOCK_LINEAR : NVHOST_RELOC_TYPE_PITCH_LINEAR;             \
     } else {                                                                             \
         for (i = 0; i < FF_ARRAY_ELEMS(AV_JOIN(frame, _map_offsets)); ++i) {             \
@@ -981,33 +981,33 @@ static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx,
     RELOC_VARS(src);
     RELOC_VARS(dst);
 
-    err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_VIC);
+    err = av_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_VIC);
     if (err < 0)
         return err;
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS,
-                          FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, CONFIG_STRUCT_SIZE, sizeof(VicConfigStruct) >> 4) |
-                          FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, GPTIMER_ON,         1)                            |
-                          FF_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, FALCON_CONTROL,     1));
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONFIG_STRUCT_OFFSET,
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS,
+                          AV_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, CONFIG_STRUCT_SIZE, sizeof(VicConfigStruct) >> 4) |
+                          AV_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, GPTIMER_ON,         1)                            |
+                          AV_NVTEGRA_VALUE(NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS, FALCON_CONTROL,     1));
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONFIG_STRUCT_OFFSET,
                           &priv->vic_map, priv->vic_setup_off,  NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_FILTER_STRUCT_OFFSET,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_FILTER_STRUCT_OFFSET,
                           &priv->vic_map, priv->vic_filter_off, NVHOST_RELOC_TYPE_DEFAULT);
 
     switch (fmt) {
         /* 16-bit transfer emulation */
         case AV_PIX_FMT_RGB565:
             /* Luma transfer */
-            FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
+            AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
                                   src_maps[0], src_map_offsets[0], src_reloc_type);
-            FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET,
+            AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET,
                                   dst_maps[0], dst_map_offsets[0], dst_reloc_type);
             break;
         case AV_PIX_FMT_RGB32:
             /* Chroma transfer */
-            FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
+            AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0),
                                   src_maps[1], src_map_offsets[1], src_reloc_type);
-            FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET,
+            AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET,
                                   dst_maps[1], dst_map_offsets[1], dst_reloc_type);
             break;
 
@@ -1016,9 +1016,9 @@ static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx,
         case AV_PIX_FMT_NV12:
         case AV_PIX_FMT_YUV420P:
             for (i = 0; i < num_planes; ++i) {
-                FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0)    + i * sizeof(uint32_t),
+                AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_SURFACE0_LUMA_OFFSET(0)    + i * sizeof(uint32_t),
                                       src_maps[i], src_map_offsets[i], src_reloc_type);
-                FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET + i * sizeof(uint32_t),
+                AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_OUTPUT_SURFACE_LUMA_OFFSET + i * sizeof(uint32_t),
                                       dst_maps[i], dst_map_offsets[i], dst_reloc_type);
             }
             break;
@@ -1026,33 +1026,33 @@ static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx,
             return AVERROR(EINVAL);
     }
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_EXECUTE,
-                          FF_NVTEGRA_ENUM(NVB0B6_VIDEO_COMPOSITOR_EXECUTE, AWAKEN, ENABLE));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_EXECUTE,
+                          AV_NVTEGRA_ENUM(NVB0B6_VIDEO_COMPOSITOR_EXECUTE, AWAKEN, ENABLE));
 
-    err = ff_nvtegra_cmdbuf_end(cmdbuf);
+    err = av_nvtegra_cmdbuf_end(cmdbuf);
     if (err < 0)
         return err;
 
     /* Insert syncpt increment to signal the end of the conversion */
-    err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_VIC);
+    err = av_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_VIC);
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT, 1));
+    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT, 1));
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_push_word(cmdbuf,
-                                      FF_NVTEGRA_VALUE(NV_THI_INCR_SYNCPT, INDX, hwctx->vic_channel.syncpt) |
-                                      FF_NVTEGRA_ENUM (NV_THI_INCR_SYNCPT, COND, OP_DONE));
+    err = av_nvtegra_cmdbuf_push_word(cmdbuf,
+                                      AV_NVTEGRA_VALUE(NV_THI_INCR_SYNCPT, INDX, hwctx->vic_channel.syncpt) |
+                                      AV_NVTEGRA_ENUM (NV_THI_INCR_SYNCPT, COND, OP_DONE));
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_end(cmdbuf);
+    err = av_nvtegra_cmdbuf_end(cmdbuf);
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_add_syncpt_incr(cmdbuf, hwctx->vic_channel.syncpt, 1, 0);
+    err = av_nvtegra_cmdbuf_add_syncpt_incr(cmdbuf, hwctx->vic_channel.syncpt, 1, 0);
     if (err < 0)
         return err;
 
@@ -1071,12 +1071,12 @@ static int nvtegra_vic_copy_plane(AVHWFramesContext *ctx, const AVFrame *src, co
     uint8_t *mem;
     int err;
 
-    mem = ff_nvtegra_map_get_addr(&priv->vic_map);
+    mem = av_nvtegra_map_get_addr(&priv->vic_map);
 
     nvtegra_vic_preprare_config((VicConfigStruct *)(mem + priv->vic_setup_off),
                                 src, dst, fmt, is_chroma);
 
-    err = ff_nvtegra_cmdbuf_clear(cmdbuf);
+    err = av_nvtegra_cmdbuf_clear(cmdbuf);
     if (err < 0)
         return err;
 
@@ -1084,11 +1084,11 @@ static int nvtegra_vic_copy_plane(AVHWFramesContext *ctx, const AVFrame *src, co
     if (err < 0)
         goto fail;
 
-    err = ff_nvtegra_channel_submit(&hwctx->vic_channel, cmdbuf, &render_fence);
+    err = av_nvtegra_channel_submit(&hwctx->vic_channel, cmdbuf, &render_fence);
     if (err < 0)
         goto fail;
 
-    err = ff_nvtegra_syncpt_wait(&hwctx->vic_channel, render_fence, -1);
+    err = av_nvtegra_syncpt_wait(&hwctx->vic_channel, render_fence, -1);
     if (err < 0)
         goto fail;
 
@@ -1127,19 +1127,19 @@ static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst,
         maps[i].owner = hwctx->vic_channel.channel.fd;
 #endif
         map_bases[i] = (uint8_t *)((uintptr_t)swframe->buf[i]->data & ~0xfff);
-        err = ff_nvtegra_map_from_va(&maps[i], map_bases[i],
+        err = av_nvtegra_map_from_va(&maps[i], map_bases[i],
                                      swframe->buf[i]->size + ((uintptr_t)swframe->buf[i]->data & 0xfff),
                                      0x100, NVMAP_HANDLE_CACHEABLE);
         if (err < 0)
             goto fail;
 
-        err = ff_nvtegra_map_map(&maps[i]);
+        err = av_nvtegra_map_map(&maps[i]);
         if (err < 0)
             goto fail;
 
         /* Flush-invalidate the CPU cache prior to the transfer */
-        ff_nvtegra_map_cache_op(&maps[i], NVMAP_CACHE_OP_WB_INV,
-                                ((uint8_t *)ff_nvtegra_map_get_addr(&maps[i])) +
+        av_nvtegra_map_cache_op(&maps[i], NVMAP_CACHE_OP_WB_INV,
+                                ((uint8_t *)av_nvtegra_map_get_addr(&maps[i])) +
                                     ((uintptr_t)swframe->buf[i]->data & 0xfff),
                                 swframe->buf[i]->size);
     }
@@ -1186,8 +1186,8 @@ static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst,
 
 fail:
     for (i = 0; i < num_maps; ++i) {
-        ff_nvtegra_map_unmap(&maps[i]);
-        ff_nvtegra_map_close(&maps[i]);
+        av_nvtegra_map_unmap(&maps[i]);
+        av_nvtegra_map_close(&maps[i]);
     }
 
     return err;

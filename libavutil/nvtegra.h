@@ -91,64 +91,64 @@ typedef struct AVNVTegraCmdbuf {
 #endif
 } AVNVTegraCmdbuf;
 
-AVBufferRef *ff_nvtegra_driver_init(void);
+AVBufferRef *av_nvtegra_driver_init(void);
 
-int ff_nvtegra_channel_open(AVNVTegraChannel *channel, const char *dev);
-int ff_nvtegra_channel_close(AVNVTegraChannel *channel);
-int ff_nvtegra_channel_get_clock_rate(AVNVTegraChannel *channel, uint32_t moduleid, uint32_t *clock_rate);
-int ff_nvtegra_channel_set_clock_rate(AVNVTegraChannel *channel, uint32_t moduleid, uint32_t clock_rate);
-int ff_nvtegra_channel_submit(AVNVTegraChannel *channel, AVNVTegraCmdbuf *cmdbuf, uint32_t *fence);
-int ff_nvtegra_channel_set_submit_timeout(AVNVTegraChannel *channel, uint32_t timeout_ms);
+int av_nvtegra_channel_open(AVNVTegraChannel *channel, const char *dev);
+int av_nvtegra_channel_close(AVNVTegraChannel *channel);
+int av_nvtegra_channel_get_clock_rate(AVNVTegraChannel *channel, uint32_t moduleid, uint32_t *clock_rate);
+int av_nvtegra_channel_set_clock_rate(AVNVTegraChannel *channel, uint32_t moduleid, uint32_t clock_rate);
+int av_nvtegra_channel_submit(AVNVTegraChannel *channel, AVNVTegraCmdbuf *cmdbuf, uint32_t *fence);
+int av_nvtegra_channel_set_submit_timeout(AVNVTegraChannel *channel, uint32_t timeout_ms);
 
-int ff_nvtegra_syncpt_wait(AVNVTegraChannel *channel, uint32_t threshold, int32_t timeout);
+int av_nvtegra_syncpt_wait(AVNVTegraChannel *channel, uint32_t threshold, int32_t timeout);
 
-int ff_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, int heap_mask, int flags);
-int ff_nvtegra_map_free(AVNVTegraMap *map);
-int ff_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t align, uint32_t flags);
-int ff_nvtegra_map_close(AVNVTegraMap *map);
-int ff_nvtegra_map_map(AVNVTegraMap *map);
-int ff_nvtegra_map_unmap(AVNVTegraMap *map);
-int ff_nvtegra_map_cache_op(AVNVTegraMap *map, int op, void *addr, size_t len);
-int ff_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align, int heap_mask, int flags);
+int av_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, int heap_mask, int flags);
+int av_nvtegra_map_free(AVNVTegraMap *map);
+int av_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t align, uint32_t flags);
+int av_nvtegra_map_close(AVNVTegraMap *map);
+int av_nvtegra_map_map(AVNVTegraMap *map);
+int av_nvtegra_map_unmap(AVNVTegraMap *map);
+int av_nvtegra_map_cache_op(AVNVTegraMap *map, int op, void *addr, size_t len);
+int av_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align, int heap_mask, int flags);
 
-static inline int ff_nvtegra_map_create(AVNVTegraMap *map, uint32_t size, uint32_t align,
+static inline int av_nvtegra_map_create(AVNVTegraMap *map, uint32_t size, uint32_t align,
                                         int heap_mask, int flags)
 {
     int err;
 
-    err = ff_nvtegra_map_allocate(map, size, align, heap_mask, flags);
+    err = av_nvtegra_map_allocate(map, size, align, heap_mask, flags);
     if (err < 0)
         return err;
 
-    return ff_nvtegra_map_map(map);
+    return av_nvtegra_map_map(map);
 }
 
-static inline int ff_nvtegra_map_destroy(AVNVTegraMap *map) {
+static inline int av_nvtegra_map_destroy(AVNVTegraMap *map) {
     int err;
 
-    err = ff_nvtegra_map_unmap(map);
+    err = av_nvtegra_map_unmap(map);
     if (err < 0)
         return err;
 
-    return ff_nvtegra_map_free(map);
+    return av_nvtegra_map_free(map);
 }
 
-int ff_nvtegra_cmdbuf_init(AVNVTegraCmdbuf *cmdbuf);
-int ff_nvtegra_cmdbuf_deinit(AVNVTegraCmdbuf *cmdbuf);
-int ff_nvtegra_cmdbuf_add_memory(AVNVTegraCmdbuf *cmdbuf, AVNVTegraMap *map, uint32_t offset, uint32_t size);
-int ff_nvtegra_cmdbuf_clear(AVNVTegraCmdbuf *cmdbuf);
-int ff_nvtegra_cmdbuf_begin(AVNVTegraCmdbuf *cmdbuf, uint32_t class_id);
-int ff_nvtegra_cmdbuf_end(AVNVTegraCmdbuf *cmdbuf);
-int ff_nvtegra_cmdbuf_push_word(AVNVTegraCmdbuf *cmdbuf, uint32_t word);
-int ff_nvtegra_cmdbuf_push_value(AVNVTegraCmdbuf *cmdbuf, uint32_t offset, uint32_t word);
-int ff_nvtegra_cmdbuf_push_reloc(AVNVTegraCmdbuf *cmdbuf, uint32_t offset, AVNVTegraMap *target, uint32_t target_offset,
+int av_nvtegra_cmdbuf_init(AVNVTegraCmdbuf *cmdbuf);
+int av_nvtegra_cmdbuf_deinit(AVNVTegraCmdbuf *cmdbuf);
+int av_nvtegra_cmdbuf_add_memory(AVNVTegraCmdbuf *cmdbuf, AVNVTegraMap *map, uint32_t offset, uint32_t size);
+int av_nvtegra_cmdbuf_clear(AVNVTegraCmdbuf *cmdbuf);
+int av_nvtegra_cmdbuf_begin(AVNVTegraCmdbuf *cmdbuf, uint32_t class_id);
+int av_nvtegra_cmdbuf_end(AVNVTegraCmdbuf *cmdbuf);
+int av_nvtegra_cmdbuf_push_word(AVNVTegraCmdbuf *cmdbuf, uint32_t word);
+int av_nvtegra_cmdbuf_push_value(AVNVTegraCmdbuf *cmdbuf, uint32_t offset, uint32_t word);
+int av_nvtegra_cmdbuf_push_reloc(AVNVTegraCmdbuf *cmdbuf, uint32_t offset, AVNVTegraMap *target, uint32_t target_offset,
                                  int reloc_type, int shift);
-int ff_nvtegra_cmdbuf_push_wait(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence);
-int ff_nvtegra_cmdbuf_add_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t
+int av_nvtegra_cmdbuf_push_wait(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence);
+int av_nvtegra_cmdbuf_add_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t
                                       num_incrs, uint32_t fence);
-int ff_nvtegra_cmdbuf_add_waitchk(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence);
+int av_nvtegra_cmdbuf_add_waitchk(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence);
 
-static inline uint32_t ff_nvtegra_map_get_handle(AVNVTegraMap *map) {
+static inline uint32_t av_nvtegra_map_get_handle(AVNVTegraMap *map) {
 #ifndef __SWITCH__
     return map->handle;
 #else
@@ -156,7 +156,7 @@ static inline uint32_t ff_nvtegra_map_get_handle(AVNVTegraMap *map) {
 #endif
 }
 
-static inline void *ff_nvtegra_map_get_addr(AVNVTegraMap *map) {
+static inline void *av_nvtegra_map_get_addr(AVNVTegraMap *map) {
 #ifndef __SWITCH__
     return map->cpu_addr;
 #else
@@ -164,7 +164,7 @@ static inline void *ff_nvtegra_map_get_addr(AVNVTegraMap *map) {
 #endif
 }
 
-static inline uint32_t ff_nvtegra_map_get_size(AVNVTegraMap *map) {
+static inline uint32_t av_nvtegra_map_get_size(AVNVTegraMap *map) {
 #ifndef __SWITCH__
     return map->size;
 #else
@@ -173,26 +173,26 @@ static inline uint32_t ff_nvtegra_map_get_size(AVNVTegraMap *map) {
 }
 
 /* Addresses are shifted by 8 bits in the command buffer, requiring an alignment to 256 */
-#define FF_NVTEGRA_MAP_ALIGN (1 << 8)
+#define AV_NVTEGRA_MAP_ALIGN (1 << 8)
 
-#define FF_NVTEGRA_VALUE(offset, field, value)                                                    \
+#define AV_NVTEGRA_VALUE(offset, field, value)                                                    \
     ((value &                                                                                     \
     ((uint32_t)((UINT64_C(1) << ((1?offset ## _ ## field) - (0?offset ## _ ## field) + 1)) - 1))) \
     << (0?offset ## _ ## field))
 
-#define FF_NVTEGRA_ENUM(offset, field, value)                                                     \
+#define AV_NVTEGRA_ENUM(offset, field, value)                                                     \
     ((offset ## _ ## field ## _ ## value &                                                        \
     ((uint32_t)((UINT64_C(1) << ((1?offset ## _ ## field) - (0?offset ## _ ## field) + 1)) - 1))) \
     << (0?offset ## _ ## field))
 
-#define FF_NVTEGRA_PUSH_VALUE(cmdbuf, offset, value) ({                                  \
-    int _err = ff_nvtegra_cmdbuf_push_value(cmdbuf, (offset) / sizeof(uint32_t), value); \
+#define AV_NVTEGRA_PUSH_VALUE(cmdbuf, offset, value) ({                                  \
+    int _err = av_nvtegra_cmdbuf_push_value(cmdbuf, (offset) / sizeof(uint32_t), value); \
     if (_err < 0)                                                                        \
         return _err;                                                                     \
 })
 
-#define FF_NVTEGRA_PUSH_RELOC(cmdbuf, offset, target, target_offset, type) ({    \
-    int _err = ff_nvtegra_cmdbuf_push_reloc(cmdbuf, (offset) / sizeof(uint32_t), \
+#define AV_NVTEGRA_PUSH_RELOC(cmdbuf, offset, target, target_offset, type) ({    \
+    int _err = av_nvtegra_cmdbuf_push_reloc(cmdbuf, (offset) / sizeof(uint32_t), \
                                             target, target_offset, type, 8);     \
     if (_err < 0)                                                                \
         return _err;                                                             \

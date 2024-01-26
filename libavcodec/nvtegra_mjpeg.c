@@ -74,11 +74,11 @@ static int nvtegra_mjpeg_decode_init(AVCodecContext *avctx) {
 
     ctx->core.pic_setup_off  = 0;
     ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvjpg_dec_drv_pic_setup_s),
-                                       FF_NVTEGRA_MAP_ALIGN);
+                                       AV_NVTEGRA_MAP_ALIGN);
     ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvjpg_dec_status),
-                                       FF_NVTEGRA_MAP_ALIGN);
-    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + FF_NVTEGRA_MAP_ALIGN,
-                                       FF_NVTEGRA_MAP_ALIGN);
+                                       AV_NVTEGRA_MAP_ALIGN);
+    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + AV_NVTEGRA_MAP_ALIGN,
+                                       AV_NVTEGRA_MAP_ALIGN);
     ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_nvtegra_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
@@ -194,34 +194,34 @@ static int nvtegra_mjpeg_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, MJpegDecodeCont
 
     int err;
 
-    err = ff_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVJPG);
+    err = av_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVJPG);
     if (err < 0)
         return err;
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_APPLICATION_ID,
-                          FF_NVTEGRA_ENUM(NVE7D0_SET_APPLICATION_ID, ID, NVJPG_DECODER));
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_CONTROL_PARAMS,
-                          FF_NVTEGRA_VALUE(NVE7D0_SET_CONTROL_PARAMS, DUMP_CYCLE_COUNT, 1) |
-                          FF_NVTEGRA_VALUE(NVE7D0_SET_CONTROL_PARAMS, GPTIMER_ON,       1));
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_PICTURE_INDEX,
-                          FF_NVTEGRA_VALUE(NVE7D0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_APPLICATION_ID,
+                          AV_NVTEGRA_ENUM(NVE7D0_SET_APPLICATION_ID, ID, NVJPG_DECODER));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_CONTROL_PARAMS,
+                          AV_NVTEGRA_VALUE(NVE7D0_SET_CONTROL_PARAMS, DUMP_CYCLE_COUNT, 1) |
+                          AV_NVTEGRA_VALUE(NVE7D0_SET_CONTROL_PARAMS, GPTIMER_ON,       1));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_SET_PICTURE_INDEX,
+                          AV_NVTEGRA_VALUE(NVE7D0_SET_PICTURE_INDEX, INDEX, ctx->core.frame_idx));
 
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_IN_DRV_PIC_SETUP,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_IN_DRV_PIC_SETUP,
                           input_map, ctx->core.pic_setup_off, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_BITSTREAM,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_BITSTREAM,
                           input_map, ctx->core.bitstream_off, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_OUT_STATUS,
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_OUT_STATUS,
                           input_map, ctx->core.status_off,    NVHOST_RELOC_TYPE_DEFAULT);
 
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC, ff_nvtegra_frame_get_fbuf_map(current_frame),
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC, av_nvtegra_frame_get_fbuf_map(current_frame),
                           0, NVHOST_RELOC_TYPE_DEFAULT);
-    FF_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC_CHROMA_U, ff_nvtegra_frame_get_fbuf_map(current_frame),
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC_CHROMA_U, av_nvtegra_frame_get_fbuf_map(current_frame),
                           current_frame->data[1] - current_frame->data[0], NVHOST_RELOC_TYPE_DEFAULT);
 
-    FF_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_EXECUTE,
-                          FF_NVTEGRA_ENUM(NVE7D0_EXECUTE, AWAKEN, ENABLE));
+    AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVE7D0_EXECUTE,
+                          AV_NVTEGRA_ENUM(NVE7D0_EXECUTE, AWAKEN, ENABLE));
 
-    err = ff_nvtegra_cmdbuf_end(cmdbuf);
+    err = av_nvtegra_cmdbuf_end(cmdbuf);
     if (err < 0)
         return err;
 
@@ -263,7 +263,7 @@ static int nvtegra_mjpeg_end_frame(AVCodecContext *avctx) {
     if (!tf || !ctx->core.num_slices)
         return 0;
 
-    mem = ff_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
+    mem = av_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
 
     setup = (nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off);
     setup->bitstream_offset = 0;
@@ -273,7 +273,7 @@ static int nvtegra_mjpeg_end_frame(AVCodecContext *avctx) {
     if (err < 0)
         return err;
 
-    output_map = ff_nvtegra_frame_get_fbuf_map(frame);
+    output_map = av_nvtegra_frame_get_fbuf_map(frame);
     output_map->is_linear = true;
 
     return ff_nvtegra_end_frame(avctx, frame, &ctx->core, NULL, 0);
@@ -291,7 +291,7 @@ static int nvtegra_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
 
     tf = fdd->hwaccel_priv;
     input_map = (AVNVTegraMap *)tf->input_map_ref->data;
-    mem = ff_nvtegra_map_get_addr(input_map);
+    mem = av_nvtegra_map_get_addr(input_map);
 
     /* In nvtegra_mjpeg_start_frame the JFIF headers haven't been entirely parsed yet */
     nvtegra_mjpeg_prepare_frame_setup((nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off), s, ctx);

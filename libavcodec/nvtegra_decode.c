@@ -36,7 +36,7 @@ static void nvtegra_input_map_free(void *opaque, uint8_t *data) {
     if (!data)
         return;
 
-    ff_nvtegra_map_destroy(map);
+    av_nvtegra_map_destroy(map);
 
     av_freep(&map);
 }
@@ -56,7 +56,7 @@ static AVBufferRef *nvtegra_input_map_alloc(void *opaque, size_t size) {
     map->owner = ctx->channel->channel.fd;
 #endif
 
-    err = ff_nvtegra_map_create(map, ctx->input_map_size, 0x100,
+    err = av_nvtegra_map_create(map, ctx->input_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         return NULL;
@@ -71,7 +71,7 @@ static AVBufferRef *nvtegra_input_map_alloc(void *opaque, size_t size) {
 
 fail:
     av_log(ctx, AV_LOG_ERROR, "Failed to create buffer\n");
-    ff_nvtegra_map_destroy(map);
+    av_nvtegra_map_destroy(map);
     av_freep(map);
     return NULL;
 }
@@ -109,11 +109,11 @@ int ff_nvtegra_decode_init(AVCodecContext *avctx, NVTegraDecodeContext *ctx) {
 
     ctx->channel = !ctx->is_nvjpg ? &device_hwctx->nvdec_channel : &device_hwctx->nvjpg_channel;
 
-    err = ff_nvtegra_cmdbuf_init(&ctx->cmdbuf);
+    err = av_nvtegra_cmdbuf_init(&ctx->cmdbuf);
     if (err < 0)
         goto fail;
 
-    err = ff_nvtegra_dfs_init(hw_device_ctx, ctx->channel, avctx->coded_width, avctx->coded_height,
+    err = av_nvtegra_dfs_init(hw_device_ctx, ctx->channel, avctx->coded_width, avctx->coded_height,
                               av_q2d(avctx->framerate));
     if (err < 0)
         goto fail;
@@ -133,9 +133,9 @@ int ff_nvtegra_decode_uninit(AVCodecContext *avctx, NVTegraDecodeContext *ctx) {
 
     av_buffer_unref(&ctx->hw_device_ref);
 
-    ff_nvtegra_cmdbuf_deinit(&ctx->cmdbuf);
+    av_nvtegra_cmdbuf_deinit(&ctx->cmdbuf);
 
-    ff_nvtegra_dfs_uninit(hw_device_ctx, ctx->channel);
+    av_nvtegra_dfs_uninit(hw_device_ctx, ctx->channel);
 
     return 0;
 }
@@ -148,7 +148,7 @@ static void nvtegra_fdd_priv_free(void *priv) {
         return;
 
     if (tf->in_flight)
-        ff_nvtegra_syncpt_wait(ctx->channel, tf->fence, -1);
+        av_nvtegra_syncpt_wait(ctx->channel, tf->fence, -1);
 
     av_buffer_unref(&tf->input_map_ref);
     av_freep(&tf);
@@ -170,9 +170,9 @@ int ff_nvtegra_wait_decode(void *logctx, AVFrame *frame) {
     if (!tf->in_flight)
         return 0;
 
-    mem = ff_nvtegra_map_get_addr(input_map);
+    mem = av_nvtegra_map_get_addr(input_map);
 
-    err = ff_nvtegra_syncpt_wait(ctx->channel, tf->fence, -1);
+    err = av_nvtegra_syncpt_wait(ctx->channel, tf->fence, -1);
     if (err < 0)
         return err;
 
@@ -193,7 +193,7 @@ int ff_nvtegra_wait_decode(void *logctx, AVFrame *frame) {
     }
 
     /* Decode time in µs: decode_cycles * 1000000 / ctx->channel->clock */
-    err = ff_nvtegra_dfs_update(hw_device_ctx, ctx->channel, tf->bitstream_len, decode_cycles);
+    err = av_nvtegra_dfs_update(hw_device_ctx, ctx->channel, tf->bitstream_len, decode_cycles);
     if (err < 0)
         return err;
 
@@ -238,12 +238,12 @@ int ff_nvtegra_start_frame(AVCodecContext *avctx, AVFrame *frame, NVTegraDecodeC
     tf = fdd->hwaccel_priv;
     tf->in_flight = false;
 
-    err = ff_nvtegra_cmdbuf_add_memory(&ctx->cmdbuf, (AVNVTegraMap *)tf->input_map_ref->data,
+    err = av_nvtegra_cmdbuf_add_memory(&ctx->cmdbuf, (AVNVTegraMap *)tf->input_map_ref->data,
                                        ctx->cmdbuf_off, ctx->max_cmdbuf_size);
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_clear(&ctx->cmdbuf);
+    err = av_nvtegra_cmdbuf_clear(&ctx->cmdbuf);
     if (err < 0)
         return err;
 
@@ -267,7 +267,7 @@ int ff_nvtegra_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     uint8_t *mem;
     int err;
 
-    mem = ff_nvtegra_map_get_addr(input_map);
+    mem = av_nvtegra_map_get_addr(input_map);
 
     startcode_size = add_startcode ? 3 : 0;
 
@@ -294,15 +294,15 @@ int ff_nvtegra_decode_slice(AVCodecContext *avctx, AVFrame *frame,
         need_bitstream_move = true;
     }
 
-    if (ctx->input_map_size != ff_nvtegra_map_get_size(input_map)) {
-        err = ff_nvtegra_map_realloc(input_map, ctx->input_map_size, 0x100,
+    if (ctx->input_map_size != av_nvtegra_map_get_size(input_map)) {
+        err = av_nvtegra_map_realloc(input_map, ctx->input_map_size, 0x100,
                                      NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
         if (err < 0)
             return err;
 
-        mem = ff_nvtegra_map_get_addr(input_map);
+        mem = av_nvtegra_map_get_addr(input_map);
 
-        err = ff_nvtegra_cmdbuf_add_memory(&ctx->cmdbuf, input_map,
+        err = av_nvtegra_cmdbuf_add_memory(&ctx->cmdbuf, input_map,
                                            ctx->cmdbuf_off, ctx->max_cmdbuf_size);
         if (err < 0)
             return err;
@@ -339,7 +339,7 @@ int ff_nvtegra_end_frame(AVCodecContext *avctx, AVFrame *frame, NVTegraDecodeCon
     uint8_t *mem;
     int err;
 
-    mem = ff_nvtegra_map_get_addr(input_map);
+    mem = av_nvtegra_map_get_addr(input_map);
 
     /* Last slice data range */
     if (ctx->max_num_slices)
@@ -350,29 +350,29 @@ int ff_nvtegra_end_frame(AVCodecContext *avctx, AVFrame *frame, NVTegraDecodeCon
         memcpy(mem + ctx->bitstream_off + ctx->bitstream_len, end_sequence, end_sequence_size);
 
     /* Insert syncpt increment to signal the end of the decoding */
-    err = ff_nvtegra_cmdbuf_begin(&ctx->cmdbuf, !ctx->is_nvjpg ? HOST1X_CLASS_NVDEC : HOST1X_CLASS_NVJPG);
+    err = av_nvtegra_cmdbuf_begin(&ctx->cmdbuf, !ctx->is_nvjpg ? HOST1X_CLASS_NVDEC : HOST1X_CLASS_NVJPG);
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_push_word(&ctx->cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT, 1));
+    err = av_nvtegra_cmdbuf_push_word(&ctx->cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT, 1));
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_push_word(&ctx->cmdbuf,
-                                      FF_NVTEGRA_VALUE(NV_THI_INCR_SYNCPT, INDX, ctx->channel->syncpt) |
-                                      FF_NVTEGRA_ENUM (NV_THI_INCR_SYNCPT, COND, OP_DONE));
+    err = av_nvtegra_cmdbuf_push_word(&ctx->cmdbuf,
+                                      AV_NVTEGRA_VALUE(NV_THI_INCR_SYNCPT, INDX, ctx->channel->syncpt) |
+                                      AV_NVTEGRA_ENUM (NV_THI_INCR_SYNCPT, COND, OP_DONE));
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_end(&ctx->cmdbuf);
+    err = av_nvtegra_cmdbuf_end(&ctx->cmdbuf);
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_cmdbuf_add_syncpt_incr(&ctx->cmdbuf, ctx->channel->syncpt, 1, 0);
+    err = av_nvtegra_cmdbuf_add_syncpt_incr(&ctx->cmdbuf, ctx->channel->syncpt, 1, 0);
     if (err < 0)
         return err;
 
-    err = ff_nvtegra_channel_submit(ctx->channel, &ctx->cmdbuf, &tf->fence);
+    err = av_nvtegra_channel_submit(ctx->channel, &ctx->cmdbuf, &tf->fence);
     if (err < 0)
         return err;
 
