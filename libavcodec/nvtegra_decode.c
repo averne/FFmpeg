@@ -201,10 +201,15 @@ int ff_nvtegra_wait_decode(void *logctx, AVFrame *frame) {
 }
 
 int ff_nvtegra_start_frame(AVCodecContext *avctx, AVFrame *frame, NVTegraDecodeContext *ctx) {
-    FrameDecodeData *fdd = (FrameDecodeData *)frame->private_ref->data;
+    AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
+    FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
 
     NVTegraFrame *tf = NULL;
     int err;
+
+    /* Abort on resolution changes that wouldn't fit into the frame */
+    if ((frame->width > frames_ctx->width) || (frame->height > frames_ctx->height))
+        return AVERROR(EINVAL);
 
     ctx->bitstream_len = ctx->num_slices = 0;
 
