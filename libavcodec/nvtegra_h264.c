@@ -279,7 +279,7 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
 
     /* Remove stale references from our ref list */
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
-        if (!ctx->refs[i].map)
+        if (!(ctx->refs_mask & (1 << i)))
             continue;
 
         for (j = 0; j < dpb_size; ++j) {
@@ -298,7 +298,7 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         }
     }
 
-    /* Update the ordered DPB and pic id masks */
+    /* Update the ordered DPB mask */
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->ordered_dpb_map); ++i) {
         if (!(ctx->ordered_dpb_mask & (1 << i)))
             continue;
@@ -310,7 +310,7 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
 
     /* Add new frames to the ordered DPB */
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
-        if (!ctx->refs[i].map)
+        if (!(ctx->refs_mask & (1 << i)))
             continue;
 
         for (j = 0; j < FF_ARRAY_ELEMS(ctx->ordered_dpb_map); ++j) {
@@ -322,7 +322,10 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
             ctx->ordered_dpb_map[find_slot(&ctx->ordered_dpb_mask)] = i;
     }
 
-    /* In the case of interlaced video, the new frame can be the same as the last */
+    /*
+     * Add the current frame to our ref list
+     * In the case of interlaced video, the new frame can be the same as the last
+     */
     if (ctx->refs[ctx->cur_frame].map != av_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f)) {
         /* Allocate a pic id for the current frame */
         i = find_slot(&ctx->pic_id_mask);
