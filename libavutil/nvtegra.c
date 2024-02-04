@@ -234,45 +234,48 @@ int av_nvtegra_channel_close(AVNVTegraChannel *channel) {
 }
 
 int av_nvtegra_channel_get_clock_rate(AVNVTegraChannel *channel, uint32_t moduleid, uint32_t *clock_rate) {
-    struct nvhost_clk_rate_args args;
     int err;
+#ifndef __SWITCH__
+    struct nvhost_clk_rate_args args;
 
     args = (struct nvhost_clk_rate_args){
         .moduleid = moduleid,
     };
 
-#ifndef __SWITCH__
     err = ioctl(channel->fd, NVHOST_IOCTL_CHANNEL_GET_CLK_RATE, &args);
     if (err < 0)
         return AVERROR(errno);
-#else
-    err = nvIoctl(channel->channel.fd, _NV_IOWR(0, hosversionBefore(8,0,0) ? 0x14 : 0x23, args), &args);
-    if (R_FAILED(err))
-        return AVERROR(err);
-#endif
 
     if (clock_rate)
         *clock_rate = args.rate;
 
     return 0;
+#else
+    uint32_t tmp;
+
+    err = AVERROR(nvioctlChannel_GetModuleClockRate(channel->channel.fd, moduleid, &tmp));
+    if (err < 0)
+        return err;
+
+    if (clock_rate)
+        *clock_rate = tmp * 1000;
+
+    return 0;
+#endif
 }
 
 int av_nvtegra_channel_set_clock_rate(AVNVTegraChannel *channel, uint32_t moduleid, uint32_t clock_rate) {
+#ifndef __SWITCH__
     struct nvhost_clk_rate_args args;
 
     args = (struct nvhost_clk_rate_args){
-#ifndef __SWITCH__
         .rate     = clock_rate,
-#else
-        .rate     = clock_rate / 1000,
-#endif
         .moduleid = moduleid,
     };
 
-#ifndef __SWITCH__
     return (ioctl(channel->fd, NVHOST_IOCTL_CHANNEL_SET_CLK_RATE, &args) < 0) ? AVERROR(errno) : 0;
 #else
-    return AVERROR(nvIoctl(channel->channel.fd, _NV_IOW(0, 8, args), &args));
+    return AVERROR(nvioctlChannel_SetModuleClockRate(channel->channel.fd, moduleid, clock_rate / 1000));
 #endif
 }
 
@@ -330,16 +333,16 @@ int av_nvtegra_channel_submit(AVNVTegraChannel *channel, AVNVTegraCmdbuf *cmdbuf
 }
 
 int av_nvtegra_channel_set_submit_timeout(AVNVTegraChannel *channel, uint32_t timeout_ms) {
+#ifndef __SWITCH__
     struct nvhost_set_timeout_args args;
 
     args = (struct nvhost_set_timeout_args){
         .timeout = timeout_ms,
     };
 
-#ifndef __SWITCH__
     return (ioctl(channel->fd, NVHOST_IOCTL_CHANNEL_SET_TIMEOUT, &args) < 0) ? AVERROR(errno) : 0;
 #else
-    return AVERROR(nvIoctl(channel->channel.fd, _NV_IOW(0, 7, args), &args));
+    return AVERROR(nvioctlChannel_SetSubmitTimeout(channel->channel.fd, timeout_ms));
 #endif
 }
 
