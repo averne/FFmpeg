@@ -91,6 +91,50 @@ typedef struct AVNVTegraCmdbuf {
 #endif
 } AVNVTegraCmdbuf;
 
+typedef struct AVNVTegraJobPool {
+    /*
+     * Pool object for job allocation
+     */
+    AVBufferPool *pool;
+
+    /*
+     * Hardware channel the jobs will be submitted to
+     */
+    AVNVTegraChannel *channel;
+
+    /*
+     * Total size of the input memory-mapped buffer
+     */
+    size_t input_map_size;
+
+    /*
+     * Offset of the command data within the input map
+     */
+    off_t cmdbuf_off;
+
+    /*
+     * Maximum memory usable by the command buffer
+     */
+    size_t max_cmdbuf_size;
+} AVNVTegraJobPool;
+
+typedef struct AVNVTegraJob {
+    /*
+     * Memory-mapped buffer for command buffers, metadata structures, ...
+     */
+    AVNVTegraMap input_map;
+
+    /*
+     * Object for command recording
+     */
+    AVNVTegraCmdbuf cmdbuf;
+
+    /*
+     * Fence indicating completion of the job
+     */
+    uint32_t fence;
+} AVNVTegraJob;
+
 AVBufferRef *av_nvtegra_driver_init(void);
 
 int av_nvtegra_channel_open(AVNVTegraChannel *channel, const char *dev);
@@ -147,6 +191,17 @@ int av_nvtegra_cmdbuf_push_wait(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32
 int av_nvtegra_cmdbuf_add_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t
                                       num_incrs, uint32_t fence);
 int av_nvtegra_cmdbuf_add_waitchk(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence);
+
+/*
+ * Job allocation and submission routines
+ */
+int av_nvtegra_job_pool_init(AVNVTegraJobPool *pool, AVNVTegraChannel *channel,
+                             size_t input_map_size, off_t cmdbuf_off, size_t max_cmdbuf_size);
+int av_nvtegra_job_pool_uninit(AVNVTegraJobPool *pool);
+AVBufferRef *av_nvtegra_job_pool_get(AVNVTegraJobPool *pool);
+
+int av_nvtegra_job_submit(AVNVTegraJobPool *pool, AVNVTegraJob *job);
+int av_nvtegra_job_wait(AVNVTegraJobPool *pool, AVNVTegraJob *job, int timeout);
 
 static inline uint32_t av_nvtegra_map_get_handle(AVNVTegraMap *map) {
 #ifndef __SWITCH__

@@ -24,6 +24,7 @@
 #include <stdint.h>
 
 #include "hwcontext.h"
+#include "buffer.h"
 #include "frame.h"
 #include "pixfmt.h"
 
@@ -45,14 +46,17 @@ typedef struct AVNVTegraDeviceContext {
     bool has_nvdec, has_nvjpg;
 } AVNVTegraDeviceContext;
 
+/*
+ * Helper to retrieve a map object from the corresponding frame
+ */
 static inline AVNVTegraMap *av_nvtegra_frame_get_fbuf_map(const AVFrame *frame) {
     return (AVNVTegraMap *)frame->buf[0]->data;
 }
 
 /*
- * Helper to retrieve a map object from the corresponding frame
+ * Converts a pixel format to the equivalent code for the VIC engine
  */
-int av_nvtegra_map_vic_pic_fmt(enum AVPixelFormat fmt);
+int av_nvtegra_pixfmt_to_vic(enum AVPixelFormat fmt);
 
 /*
  * Dynamic frequency scaling routines

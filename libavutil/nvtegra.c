@@ -926,3 +926,88 @@ int av_nvtegra_cmdbuf_add_waitchk(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint
 
     return av_nvtegra_cmdbuf_push_wait(cmdbuf, syncpt, fence);
 }
+
+static void nvtegra_job_free(void *opaque, uint8_t *data) {
+    AVNVTegraJob *job = (AVNVTegraJob *)data;
+
+    if (!job)
+        return;
+
+    av_nvtegra_cmdbuf_deinit(&job->cmdbuf);
+    av_nvtegra_map_destroy(&job->input_map);
+
+    av_freep(&job);
+}
+
+static AVBufferRef *nvtegra_job_alloc(void *opaque, size_t size) {
+    AVNVTegraJobPool *pool = opaque;
+
+    AVBufferRef  *buffer;
+    AVNVTegraJob *job;
+    int err;
+
+    job = av_mallocz(sizeof(*job));
+    if (!job)
+        return NULL;
+
+#ifdef __SWITCH__
+    job->input_map.owner = pool->channel->channel.fd;
+#endif
+
+    err = av_nvtegra_map_create(&job->input_map, pool->input_map_size, 0x100,
+                                NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
+    if (err < 0)
+        goto fail;
+
+    err = av_nvtegra_cmdbuf_init(&job->cmdbuf);
+    if (err < 0)
+        goto fail;
+
+    err = av_nvtegra_cmdbuf_add_memory(&job->cmdbuf, &job->input_map, pool->cmdbuf_off, pool->max_cmdbuf_size);
+    if (err < 0)
+        goto fail;
+
+    buffer = av_buffer_create((uint8_t *)job, sizeof(*job), nvtegra_job_free, pool, 0);
+    if (!buffer)
+        goto fail;
+
+    return buffer;
+
+fail:
+    av_nvtegra_cmdbuf_deinit(&job->cmdbuf);
+    av_nvtegra_map_destroy(&job->input_map);
+    av_freep(job);
+    return NULL;
+}
+
+int av_nvtegra_job_pool_init(AVNVTegraJobPool *pool, AVNVTegraChannel *channel,
+                             size_t input_map_size, off_t cmdbuf_off, size_t max_cmdbuf_size)
+{
+    pool->channel         = channel;
+    pool->input_map_size  = input_map_size;
+    pool->cmdbuf_off      = cmdbuf_off;
+    pool->max_cmdbuf_size = max_cmdbuf_size;
+    pool->pool            = av_buffer_pool_init2(sizeof(AVNVTegraJob), pool,
+                                                 nvtegra_job_alloc, NULL);
+    if (!pool->pool)
+        return AVERROR(ENOMEM);
+
+    return 0;
+}
+
+int av_nvtegra_job_pool_uninit(AVNVTegraJobPool *pool) {
+    av_buffer_pool_uninit(&pool->pool);
+    return 0;
+}
+
+AVBufferRef *av_nvtegra_job_pool_get(AVNVTegraJobPool *pool) {
+    return av_buffer_pool_get(pool->pool);
+}
+
+int av_nvtegra_job_submit(AVNVTegraJobPool *pool, AVNVTegraJob *job) {
+    return av_nvtegra_channel_submit(pool->channel, &job->cmdbuf, &job->fence);
+}
+
+int av_nvtegra_job_wait(AVNVTegraJobPool *pool, AVNVTegraJob *job, int timeout) {
+    return av_nvtegra_syncpt_wait(pool->channel, job->fence, timeout);
+}
