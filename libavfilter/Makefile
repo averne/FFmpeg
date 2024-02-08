@@ -484,6 +484,7 @@ OBJS-$(CONFIG_SETSAR_FILTER)                 += vf_aspect.o
 OBJS-$(CONFIG_SETTB_FILTER)                  += settb.o
 OBJS-$(CONFIG_SHARPEN_NPP_FILTER)            += vf_sharpen_npp.o
 OBJS-$(CONFIG_SHARPNESS_VAAPI_FILTER)        += vf_misc_vaapi.o vaapi_vpp.o
+OBJS-$(CONFIG_SHARPNESS_NVTEGRA_FILTER)      += vf_misc_nvtegra.o nvtegra_vpp.o
 OBJS-$(CONFIG_SHEAR_FILTER)                  += vf_shear.o
 OBJS-$(CONFIG_SHOWINFO_FILTER)               += vf_showinfo.o
 OBJS-$(CONFIG_SHOWPALETTE_FILTER)            += vf_showpalette.o
@@ -664,6 +665,7 @@ SKIPHEADERS-$(CONFIG_VAAPI)                  += vaapi_vpp.h stack_internal.h
 SKIPHEADERS-$(CONFIG_VULKAN)                 += vulkan.h vulkan_filter.h
 SKIPHEADERS-$(CONFIG_LIBSHADERC)             += vulkan_spirv.h
 SKIPHEADERS-$(CONFIG_LIBGLSLANG)             += vulkan_spirv.h
+SKIPHEADERS-$(CONFIG_NVTEGRA)                += nvtegra_vpp.h
 
 TOOLS     = graph2dot
 TESTPROGS = drawutils filtfmts formats integral
