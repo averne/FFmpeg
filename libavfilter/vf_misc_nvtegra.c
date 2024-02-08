@@ -18,6 +18,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include "config_components.h"
+
+#include <string.h>
+
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/nvtegra_host1x.h"
@@ -27,29 +31,34 @@
 
 #include "nvtegra_vpp.h"
 
-/* Sharpness min/max/default values */
+/* Sharpening min/max/default values */
 #define SHARPNESS_MIN      0.0
 #define SHARPNESS_MAX      1.0
 #define SHARPNESS_DEFAULT  0.0
+
+/* Denoising min/max/default values */
+#define DENOISE_MIN        0.0
+#define DENOISE_MAX        1.0
+#define DENOISE_DEFAULT    0.0
 
 /* Dimension min/max/default values */
 #define FILTER_TAP_MIN     NVB0B6_FILTER_LENGTH_5TAP
 #define FILTER_TAP_MAX     NVB0B6_FILTER_LENGTH_10TAP
 #define FILTER_TAP_DEFAULT NVB0B6_FILTER_LENGTH_5TAP
 
-typedef struct NVTegraSharpnessContext {
+typedef struct NVTegraSpatialFilterContext {
     FFNVTegraVppContext core;
 
     bool has_filter_init;
     AVNVTegraMap filter_map;
 
     int filter_dimensions;
-    float sharpness;
-} NVTegraSharpnessContext;
+    float sharpness, denoise;
+} NVTegraSpatialFilterContext;
 
 /*
  * This table contains filter coefficients used during filtering and scaling operations in 5- and 10-tap modes.
- * Each word contains 3 10-bit values used for sharpening/denoising/none filters respectively.
+ * Each word contains 3 10-bit values used for sharpening/denoising/normal filters respectively.
  * The data was dumped from the l4t firmware, and verified to be identical on HOS.
  */
 static uint32_t g_VicFilterData[] = {
@@ -227,7 +236,7 @@ static uint32_t g_VicFilterData[] = {
     0x02508c24, 0x02509025, 0x02408c23, 0x02409024, 0x01f0681d, 0x0200681d, 0x01a0641a, 0x01b0681a, 0x01303c11, 0x01304011, 0x01003c0f, 0x01003c10, 0x00501005, 0x00601405, 0x00401404, 0x00501405,
 };
 
-static int nvtegra_sharpness_init_filter_map(NVTegraSharpnessContext *ctx) {
+static int nvtegra_spatialfilter_init_filter_map(NVTegraSpatialFilterContext *ctx) {
     int err;
 
     err = av_nvtegra_map_create(&ctx->filter_map, ctx->core.pool.channel,
@@ -243,24 +252,34 @@ static int nvtegra_sharpness_init_filter_map(NVTegraSharpnessContext *ctx) {
     return 0;
 }
 
-static int nvtegra_sharpness_prepare_config(NVTegraSharpnessContext *ctx, VicConfigStruct *config) {
+static int nvtegra_spatialfilter_prepare_config(NVTegraSpatialFilterContext *ctx, VicConfigStruct *config) {
     VicSlotStruct *slot = &config->slotStruct[0];
 
     int weight;
 
-    weight = (int)(ctx->sharpness * 1023.0f + 0.5f);
+    if (ctx->sharpness != SHARPNESS_MIN) {
+        weight = (int)(ctx->sharpness * 1023.0f + 0.5f);
 
-    /* 1-tap (nearest neighbor) and 2-tap (bilinear) filter dimensions cannot do  */
-    slot->slotConfig.FilterLengthX = ctx->filter_dimensions;
-    slot->slotConfig.FilterLengthY = ctx->filter_dimensions;
-    slot->slotConfig.FilterDetail  = weight;
-    slot->slotConfig.ChromaDetail  = weight;
+        slot->slotConfig.FilterLengthX = ctx->filter_dimensions;
+        slot->slotConfig.FilterLengthY = ctx->filter_dimensions;
+        slot->slotConfig.FilterDetail  = weight;
+        slot->slotConfig.ChromaDetail  = weight;
+    }
+
+    if (ctx->denoise != DENOISE_MIN) {
+        weight = (int)(ctx->denoise * 1023.0f + 0.5f);
+
+        slot->slotConfig.FilterLengthX = ctx->filter_dimensions;
+        slot->slotConfig.FilterLengthY = ctx->filter_dimensions;
+        slot->slotConfig.FilterNoise  = weight;
+        slot->slotConfig.ChromaNoise  = weight;
+    }
 
     return 0;
 }
 
-static int nvtegra_sharpness_prepare_cmdbuf(NVTegraSharpnessContext *ctx, AVNVTegraJobPool *pool,
-                                            AVNVTegraJob *job, const AVFrame *in, const AVFrame *out)
+static int nvtegra_spatialfilter_prepare_cmdbuf(NVTegraSpatialFilterContext *ctx, AVNVTegraJobPool *pool,
+                                                AVNVTegraJob *job, const AVFrame *in, const AVFrame *out)
 {
     AVNVTegraCmdbuf *cmdbuf = &job->cmdbuf;
 
@@ -317,10 +336,10 @@ static int nvtegra_sharpness_prepare_cmdbuf(NVTegraSharpnessContext *ctx, AVNVTe
     return 0;
 }
 
-static int nvtegra_sharpness_filter_frame(AVFilterLink *link, AVFrame *in) {
-    AVFilterContext       *avctx = link->dst;
-    NVTegraSharpnessContext *ctx = avctx->priv;
-    AVFilterLink        *outlink = avctx->outputs[0];
+static int nvtegra_spatialfilter_filter_frame(AVFilterLink *link, AVFrame *in) {
+    AVFilterContext           *avctx = link->dst;
+    NVTegraSpatialFilterContext *ctx = avctx->priv;
+    AVFilterLink            *outlink = avctx->outputs[0];
 
     AVBufferRef *job_ref;
     AVNVTegraJob *job;
@@ -328,10 +347,8 @@ static int nvtegra_sharpness_filter_frame(AVFilterLink *link, AVFrame *in) {
     VicConfigStruct *config;
     int err;
 
-    av_log(link->src, AV_LOG_INFO, "%s, sharpness value: %f\n", __PRETTY_FUNCTION__, ctx->sharpness);
-
     if (!ctx->has_filter_init) {
-        err = nvtegra_sharpness_init_filter_map(ctx);
+        err = nvtegra_spatialfilter_init_filter_map(ctx);
         if (err < 0)
             return err;
     }
@@ -363,7 +380,7 @@ static int nvtegra_sharpness_filter_frame(AVFilterLink *link, AVFrame *in) {
     if (err < 0)
         goto fail;
 
-    err = nvtegra_sharpness_prepare_config(ctx, config);
+    err = nvtegra_spatialfilter_prepare_config(ctx, config);
     if (err < 0)
         goto fail;
 
@@ -371,7 +388,7 @@ static int nvtegra_sharpness_filter_frame(AVFilterLink *link, AVFrame *in) {
     if (err < 0)
         return err;
 
-    err = nvtegra_sharpness_prepare_cmdbuf(ctx, &ctx->core.pool, job, in, out);
+    err = nvtegra_spatialfilter_prepare_cmdbuf(ctx, &ctx->core.pool, job, in, out);
     if (err < 0)
         goto fail;
 
@@ -395,10 +412,11 @@ fail:
     return err;
 }
 
-#define SOFFSET(x) offsetof(NVTegraSharpnessContext, x)
-#define FLAGS (AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM)
-static const AVOption sharpness_nvtegra_options[] = {
-    { "sharpness", "sharpness level",
+#define SOFFSET(x) offsetof(NVTegraSpatialFilterContext, x)
+#define FLAGS (AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_RUNTIME_PARAM | AV_OPT_FLAG_FILTERING_PARAM)
+
+static const AVOption nvtegra_sharpness_options[] = {
+    { "sharpness", "sharpening level",
       SOFFSET(sharpness), AV_OPT_TYPE_FLOAT, { .dbl = SHARPNESS_DEFAULT }, SHARPNESS_MIN, SHARPNESS_MAX, .flags = FLAGS },
 
     { "dimensions", "Filter dimensions", SOFFSET(filter_dimensions), AV_OPT_TYPE_INT,
@@ -411,34 +429,66 @@ static const AVOption sharpness_nvtegra_options[] = {
     { NULL },
 };
 
-AVFILTER_DEFINE_CLASS(sharpness_nvtegra);
+static const AVOption nvtegra_denoise_options[] = {
+    { "denoise", "denoising level",
+      SOFFSET(denoise), AV_OPT_TYPE_FLOAT, { .dbl = DENOISE_DEFAULT }, DENOISE_MIN, DENOISE_MAX, .flags = FLAGS },
 
-static const AVFilterPad sharpness_nvtegra_inputs[] = {
+    { "dimensions", "Filter dimensions", SOFFSET(filter_dimensions), AV_OPT_TYPE_INT,
+      { .i64 = FILTER_TAP_DEFAULT }, FILTER_TAP_MIN, FILTER_TAP_MAX, FLAGS, "dimensions" },
+    { "5tap",  "5-tap filtering",  0, AV_OPT_TYPE_CONST,
+      { .i64 = NVB0B6_FILTER_LENGTH_5TAP },  0, 0, FLAGS, "dimensions" },
+    { "10tap", "10-tap filtering", 0, AV_OPT_TYPE_CONST,
+      { .i64 = NVB0B6_FILTER_LENGTH_10TAP }, 0, 0, FLAGS, "dimensions" },
+
+    { NULL },
+};
+
+AVFILTER_DEFINE_CLASS(nvtegra_sharpness);
+AVFILTER_DEFINE_CLASS(nvtegra_denoise);
+
+static const AVFilterPad nvtegra_spatialfilter_inputs[] = {
     {
         .name         = "default",
         .type         = AVMEDIA_TYPE_VIDEO,
-        .filter_frame = &nvtegra_sharpness_filter_frame,
+        .filter_frame = &nvtegra_spatialfilter_filter_frame,
         .config_props = &ff_nvtegra_vpp_config_input,
     },
 };
 
-static const AVFilterPad sharpness_nvtegra_outputs[] = {
+static const AVFilterPad nvtegra_spatialfilter_outputs[] = {
     {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
+        .name         = "default",
+        .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = &ff_nvtegra_vpp_config_output,
     },
 };
 
+#if CONFIG_SHARPNESS_NVTEGRA_FILTER
 const AVFilter ff_vf_sharpness_nvtegra = {
     .name           = "sharpness_nvtegra",
-    .description    = NULL_IF_CONFIG_SMALL("NVTegra accelerated sharpness"),
-    .priv_size      = sizeof(NVTegraSharpnessContext),
+    .description    = NULL_IF_CONFIG_SMALL("NVTegra accelerated sharpening"),
+    .priv_size      = sizeof(NVTegraSpatialFilterContext),
     .init           = &ff_nvtegra_vpp_ctx_init,
     .uninit         = &ff_nvtegra_vpp_ctx_uninit,
-    FILTER_INPUTS(sharpness_nvtegra_inputs),
-    FILTER_OUTPUTS(sharpness_nvtegra_outputs),
+    FILTER_INPUTS(nvtegra_spatialfilter_inputs),
+    FILTER_OUTPUTS(nvtegra_spatialfilter_outputs),
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_NVTEGRA),
-    .priv_class     = &sharpness_nvtegra_class,
+    .priv_class     = &nvtegra_sharpness_class,
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 };
+#endif
+
+#if CONFIG_DENOISE_NVTEGRA_FILTER
+const AVFilter ff_vf_denoise_nvtegra = {
+    .name           = "denoise_nvtegra",
+    .description    = NULL_IF_CONFIG_SMALL("NVTegra accelerated denoising"),
+    .priv_size      = sizeof(NVTegraSpatialFilterContext),
+    .init           = &ff_nvtegra_vpp_ctx_init,
+    .uninit         = &ff_nvtegra_vpp_ctx_uninit,
+    FILTER_INPUTS(nvtegra_spatialfilter_inputs),
+    FILTER_OUTPUTS(nvtegra_spatialfilter_outputs),
+    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_NVTEGRA),
+    .priv_class     = &nvtegra_denoise_class,
+    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
+};
+#endif

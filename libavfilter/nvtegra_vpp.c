@@ -25,8 +25,6 @@
 int ff_nvtegra_vpp_ctx_init(AVFilterContext *avctx) {
     FFNVTegraVppContext *ctx = avctx->priv;
 
-    av_log(avctx, AV_LOG_INFO, "%s\n", __PRETTY_FUNCTION__);
-
     if (!ctx->vic_map_size) {
         ctx->vic_setup_off  = 0;
         ctx->vic_cmdbuf_off = FFALIGN(ctx->vic_setup_off  + sizeof(VicConfigStruct),
@@ -57,8 +55,6 @@ int ff_nvtegra_vpp_config_input(AVFilterLink *inlink) {
     const AVPixFmtDescriptor *desc;
     int i, err;
 
-    av_log(avctx, AV_LOG_INFO, "%s\n", __PRETTY_FUNCTION__);
-
     if (!inlink->hw_frames_ctx) {
         av_log(avctx, AV_LOG_ERROR, "No hardware frame context provided on input\n");
         return AVERROR(EINVAL);
@@ -68,7 +64,7 @@ int ff_nvtegra_vpp_config_input(AVFilterLink *inlink) {
     if (input_frames_ctx->format != AV_PIX_FMT_NVTEGRA)
         return AVERROR(EINVAL);
 
-    desc = av_pix_fmt_desc_get(input_frames_ctx->format);
+    desc = av_pix_fmt_desc_get(input_frames_ctx->sw_format);
     for (i = 0; i < desc->nb_components; ++i) {
         if (desc->comp[i].depth > 8) {
             av_log(avctx, AV_LOG_ERROR, "Color depth %d > 8 for component %d of format %s unsupported\n",
@@ -114,8 +110,6 @@ int ff_nvtegra_vpp_config_output(AVFilterLink *outlink) {
     AVHWFramesContext *input_hwframes_ctx, *output_hwframes_ctx;
     int err;
 
-    av_log(avctx, AV_LOG_INFO, "%s\n", __PRETTY_FUNCTION__);
-
     av_buffer_unref(&outlink->hw_frames_ctx);
 
     input_hwframes_ctx = (AVHWFramesContext *)inlink->hw_frames_ctx->data;
@@ -128,14 +122,10 @@ int ff_nvtegra_vpp_config_output(AVFilterLink *outlink) {
             (input_hwframes_ctx->width == ctx->output_width) &&
             (input_hwframes_ctx->width == ctx->output_width))
     {
-        av_log(avctx, AV_LOG_INFO, "Reusing hardware frame context\n");
-
         outlink->hw_frames_ctx = av_buffer_ref(inlink->hw_frames_ctx);
         if (!outlink->hw_frames_ctx)
             return AVERROR(ENOMEM);
     } else {
-        av_log(avctx, AV_LOG_INFO, "Allocating new hardware frame context\n");
-
         outlink->hw_frames_ctx = av_hwframe_ctx_alloc(ctx->device_ref);
         if (!outlink->hw_frames_ctx)
             return AVERROR(ENOMEM);

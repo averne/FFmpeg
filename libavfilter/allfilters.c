@@ -457,6 +457,7 @@ extern const AVFilter ff_vf_settb;
 extern const AVFilter ff_vf_sharpen_npp;
 extern const AVFilter ff_vf_sharpness_vaapi;
 extern const AVFilter ff_vf_sharpness_nvtegra;
+extern const AVFilter ff_vf_denoise_nvtegra;
 extern const AVFilter ff_vf_shear;
 extern const AVFilter ff_vf_showinfo;
 extern const AVFilter ff_vf_showpalette;
