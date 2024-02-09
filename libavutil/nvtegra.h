@@ -146,21 +146,23 @@ int av_nvtegra_channel_set_submit_timeout(AVNVTegraChannel *channel, uint32_t ti
 
 int av_nvtegra_syncpt_wait(AVNVTegraChannel *channel, uint32_t threshold, int32_t timeout);
 
-int av_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align, int heap_mask, int flags);
+int av_nvtegra_map_allocate(AVNVTegraMap *map, AVNVTegraChannel *owner, uint32_t size,
+                            uint32_t align, int heap_mask, int flags);
 int av_nvtegra_map_free(AVNVTegraMap *map);
-int av_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t align, uint32_t flags);
+int av_nvtegra_map_from_va(AVNVTegraMap *map, AVNVTegraChannel *owner, void *mem,
+                           uint32_t size, uint32_t align, uint32_t flags);
 int av_nvtegra_map_close(AVNVTegraMap *map);
 int av_nvtegra_map_map(AVNVTegraMap *map);
 int av_nvtegra_map_unmap(AVNVTegraMap *map);
 int av_nvtegra_map_cache_op(AVNVTegraMap *map, int op, void *addr, size_t len);
 int av_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align, int heap_mask, int flags);
 
-static inline int av_nvtegra_map_create(AVNVTegraMap *map, uint32_t size, uint32_t align,
+static inline int av_nvtegra_map_create(AVNVTegraMap *map, AVNVTegraChannel *owner, uint32_t size, uint32_t align,
                                         int heap_mask, int flags)
 {
     int err;
 
-    err = av_nvtegra_map_allocate(map, size, align, heap_mask, flags);
+    err = av_nvtegra_map_allocate(map, owner, size, align, heap_mask, flags);
     if (err < 0)
         return err;
 

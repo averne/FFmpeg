@@ -380,8 +380,8 @@ static inline bool convert_cache_flags(uint32_t flags) {
 }
 #endif
 
-int av_nvtegra_map_allocate(AVNVTegraMap *map, uint32_t size, uint32_t align,
-                            int heap_mask, int flags)
+int av_nvtegra_map_allocate(AVNVTegraMap *map, AVNVTegraChannel *channel, uint32_t size,
+                            uint32_t align, int heap_mask, int flags)
 {
 #ifndef __SWITCH__
     struct nvmap_create_handle create_args;
@@ -417,6 +417,8 @@ fail:
     return AVERROR(errno);
 #else
     void *mem;
+
+    map->owner = channel->channel.fd;
 
     size = FFALIGN(size, 0x1000);
 
@@ -455,7 +457,9 @@ int av_nvtegra_map_free(AVNVTegraMap *map) {
 #endif
 }
 
-int av_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t align, uint32_t flags) {
+int av_nvtegra_map_from_va(AVNVTegraMap *map, AVNVTegraChannel *owner, void *mem,
+                           uint32_t size, uint32_t align, uint32_t flags)
+{
 #ifndef __SWITCH__
     struct nvmap_create_handle_from_va args;
     int err;
@@ -476,6 +480,9 @@ int av_nvtegra_map_from_va(AVNVTegraMap *map, void *mem, uint32_t size, uint32_t
 
     return 0;
 #else
+
+    map->owner = owner->channel.fd;
+
     return AVERROR(nvMapCreate(&map->map, mem, FFALIGN(size, 0x1000), 0x10000, NvKind_Pitch,
                                convert_cache_flags(flags)));;
 #endif
@@ -588,17 +595,21 @@ int av_nvtegra_map_cache_op(AVNVTegraMap *map, int op, void *addr, size_t len) {
 int av_nvtegra_map_realloc(AVNVTegraMap *map, uint32_t size, uint32_t align,
                            int heap_mask, int flags)
 {
+    AVNVTegraChannel channel;
     AVNVTegraMap tmp = {0};
     int err;
 
     if (av_nvtegra_map_get_size(map) >= size)
         return 0;
 
+    /* Dummy channel object to hold the owner fd */
+    channel = (AVNVTegraChannel){
 #ifdef __SWITCH__
-    tmp.owner = map->owner;
+        .channel.fd = map->owner,
 #endif
+    };
 
-    err = av_nvtegra_map_create(&tmp, size, align, heap_mask, flags);
+    err = av_nvtegra_map_create(&tmp, &channel, size, align, heap_mask, flags);
     if (err < 0)
         goto fail;
 
@@ -950,11 +961,7 @@ static AVBufferRef *nvtegra_job_alloc(void *opaque, size_t size) {
     if (!job)
         return NULL;
 
-#ifdef __SWITCH__
-    job->input_map.owner = pool->channel->channel.fd;
-#endif
-
-    err = av_nvtegra_map_create(&job->input_map, pool->input_map_size, 0x100,
+    err = av_nvtegra_map_create(&job->input_map, pool->channel, pool->input_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;

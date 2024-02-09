@@ -52,11 +52,7 @@ static AVBufferRef *nvtegra_input_map_alloc(void *opaque, size_t size) {
     if (!map)
         return NULL;
 
-#ifdef __SWITCH__
-    map->owner = ctx->channel->channel.fd;
-#endif
-
-    err = av_nvtegra_map_create(map, ctx->input_map_size, 0x100,
+    err = av_nvtegra_map_create(map, ctx->channel, ctx->input_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         return NULL;

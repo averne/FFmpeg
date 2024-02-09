@@ -83,11 +83,9 @@ static int nvtegra_h264_decode_init(AVCodecContext *avctx) {
     H264Context                *h = avctx->priv_data;
     const SPS                *sps = h->ps.sps;
     NVTegraH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-#ifdef __SWITCH__
+
     AVHWDeviceContext      *hw_device_ctx;
     AVNVTegraDeviceContext *device_hwctx;
-#endif
-
     uint32_t aligned_width, aligned_height,
              width_in_mbs, height_in_mbs, num_slices,
              coloc_size, mbhist_size, history_size, common_map_size;
@@ -123,6 +121,9 @@ static int nvtegra_h264_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    device_hwctx  = hw_device_ctx->hwctx;
+
     coloc_size   = FFALIGN(FFALIGN(height_in_mbs, 2) * (width_in_mbs * 64) - 63, 0x100);
     coloc_size  *= sps->ref_frame_count + 1; /* Max number of references frames, plus current frame */
     mbhist_size  = FFALIGN(width_in_mbs * 104, 0x100);
@@ -133,14 +134,7 @@ static int nvtegra_h264_decode_init(AVCodecContext *avctx) {
     ctx->history_off = FFALIGN(ctx->mbhist_off  + mbhist_size,  AV_NVTEGRA_MAP_ALIGN);
     common_map_size  = FFALIGN(ctx->history_off + history_size, 0x1000);
 
-#ifdef __SWITCH__
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
-    device_hwctx  = hw_device_ctx->hwctx;
-
-    ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
-#endif
-
-    err = av_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
+    err = av_nvtegra_map_create(&ctx->common_map, &device_hwctx->nvdec_channel, common_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;

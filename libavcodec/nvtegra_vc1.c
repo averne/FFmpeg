@@ -72,11 +72,9 @@ static int nvtegra_vc1_decode_uninit(AVCodecContext *avctx) {
 
 static int nvtegra_vc1_decode_init(AVCodecContext *avctx) {
     NVTegraVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-#ifdef __SWITCH__
+
     AVHWDeviceContext      *hw_device_ctx;
     AVNVTegraDeviceContext *device_hwctx;
-#endif
-
     uint32_t width_in_mbs, height_in_mbs, num_slices,
              coloc_size, history_size, scratch_size, common_map_size;
     uint8_t *mem;
@@ -110,6 +108,9 @@ static int nvtegra_vc1_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    device_hwctx  = hw_device_ctx->hwctx;
+
     coloc_size   = 3 * FFALIGN(width_in_mbs * FFALIGN(height_in_mbs, 2) * 64 - 63, AV_NVTEGRA_MAP_ALIGN);
     history_size = FFALIGN(width_in_mbs, 2) * 0x300;
     scratch_size = 0x400;
@@ -119,14 +120,7 @@ static int nvtegra_vc1_decode_init(AVCodecContext *avctx) {
     ctx->scratch_off = FFALIGN(ctx->history_off + history_size, AV_NVTEGRA_MAP_ALIGN);
     common_map_size  = FFALIGN(ctx->scratch_off + scratch_size, 0x1000);
 
-#ifdef __SWITCH__
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
-    device_hwctx  = hw_device_ctx->hwctx;
-
-    ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
-#endif
-
-    err = av_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
+    err = av_nvtegra_map_create(&ctx->common_map, &device_hwctx->nvdec_channel, common_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;

@@ -396,9 +396,7 @@ static void nvtegra_buffer_free(void *opaque, uint8_t *data) {
 
 static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
     AVHWFramesContext        *ctx = opaque;
-#ifdef __SWITCH__
     AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
-#endif
 
     AVBufferRef *buffer;
     AVNVTegraMap *map;
@@ -410,15 +408,11 @@ static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
     if (!map)
         return NULL;
 
-#ifdef __SWITCH__
-    map->owner = hwctx->nvdec_channel.channel.fd;
-#endif
-
     /*
      * Framebuffers are allocated as CPU-cacheable, since they might get copied from
      * during transfer operations. Cache management is done manually.
      */
-    err = av_nvtegra_map_create(map, size, 0x100,
+    err = av_nvtegra_map_create(map, &hwctx->nvdec_channel, size, 0x100,
                                 NVMAP_HEAP_CARVEOUT_GENERIC, NVMAP_HANDLE_CACHEABLE);
     if (err < 0)
         goto fail;
@@ -1073,9 +1067,7 @@ fail:
 static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst, const AVFrame *src,
                                      int num_planes, bool from)
 {
-#ifdef __SWITCH__
     AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
-#endif
     NVTegraDevicePriv       *priv = ctx->device_ctx->internal->priv;
 
     AVBufferRef *job_ref;
@@ -1108,11 +1100,8 @@ static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst,
          * The address and size are aligned to page boundaries.
          * Cache management is performed manually to not affect data outside the buffer.
          */
-#ifdef __SWITCH__
-        maps[i].owner = hwctx->vic_channel.channel.fd;
-#endif
         map_bases[i] = (uint8_t *)((uintptr_t)swframe->buf[i]->data & ~0xfff);
-        err = av_nvtegra_map_from_va(&maps[i], map_bases[i],
+        err = av_nvtegra_map_from_va(&maps[i], &hwctx->vic_channel, map_bases[i],
                                      swframe->buf[i]->size + ((uintptr_t)swframe->buf[i]->data & 0xfff),
                                      0x100, NVMAP_HANDLE_CACHEABLE);
         if (err < 0)

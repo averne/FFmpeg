@@ -93,11 +93,9 @@ static void nvtegra_vp8_init_probs(void *p) {
 
 static int nvtegra_vp8_decode_init(AVCodecContext *avctx) {
     NVTegraVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-#ifdef __SWITCH__
+
     AVHWDeviceContext      *hw_device_ctx;
     AVNVTegraDeviceContext *device_hwctx;
-#endif
-
     uint32_t width_in_mbs, common_map_size;
     int err;
 
@@ -121,6 +119,9 @@ static int nvtegra_vp8_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    device_hwctx  = hw_device_ctx->hwctx;
+
     width_in_mbs = FFALIGN(avctx->coded_width, MB_SIZE) / MB_SIZE;
     ctx->history_size = width_in_mbs * 0x200;
 
@@ -128,14 +129,7 @@ static int nvtegra_vp8_decode_init(AVCodecContext *avctx) {
     ctx->history_off   = FFALIGN(ctx->prob_data_off + 0x4b00,            AV_NVTEGRA_MAP_ALIGN);
     common_map_size    = FFALIGN(ctx->history_off   + ctx->history_size, 0x1000);
 
-#ifdef __SWITCH__
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
-    device_hwctx  = hw_device_ctx->hwctx;
-
-    ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
-#endif
-
-    err = av_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
+    err = av_nvtegra_map_create(&ctx->common_map, &device_hwctx->nvdec_channel, common_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;

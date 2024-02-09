@@ -79,11 +79,9 @@ static int nvtegra_vp9_decode_uninit(AVCodecContext *avctx) {
 
 static int nvtegra_vp9_decode_init(AVCodecContext *avctx) {
     NVTegraVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-#ifdef __SWITCH__
+
     AVHWDeviceContext      *hw_device_ctx;
     AVNVTegraDeviceContext *device_hwctx;
-#endif
-
     uint32_t aligned_width, aligned_height, max_sb_size,
              segment_rw_size, filter_size, col_mvrw_size, ctx_counter_size,
              common_map_size;
@@ -111,6 +109,9 @@ static int nvtegra_vp9_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    device_hwctx  = hw_device_ctx->hwctx;
+
     aligned_width    = FFALIGN(avctx->coded_width,  MB_SIZE);
     aligned_height   = FFALIGN(avctx->coded_height, MB_SIZE);
     max_sb_size      = CEILDIV(aligned_width, 64) * CEILDIV(aligned_height, 64);
@@ -128,14 +129,7 @@ static int nvtegra_vp9_decode_init(AVCodecContext *avctx) {
     ctx->ctx_counter_off = FFALIGN(ctx->col_mvrw2_off   + col_mvrw_size,    AV_NVTEGRA_MAP_ALIGN);
     common_map_size      = FFALIGN(ctx->ctx_counter_off + ctx_counter_size, 0x1000);
 
-#ifdef __SWITCH__
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
-    device_hwctx  = hw_device_ctx->hwctx;
-
-    ctx->common_map.owner = device_hwctx->nvdec_channel.channel.fd;
-#endif
-
-    err = av_nvtegra_map_create(&ctx->common_map, common_map_size, 0x100,
+    err = av_nvtegra_map_create(&ctx->common_map, &device_hwctx->nvdec_channel, common_map_size, 0x100,
                                 NVMAP_HEAP_IOVMM, NVMAP_HANDLE_WRITE_COMBINE);
     if (err < 0)
         goto fail;
