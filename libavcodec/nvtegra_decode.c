@@ -179,13 +179,13 @@ int ff_nvtegra_wait_decode(void *logctx, AVFrame *frame) {
         if (nvdec_status->error_status != 0 || nvdec_status->mbs_in_error != 0)
             return AVERROR_UNKNOWN;
 
-        decode_cycles = nvdec_status->decode_cycles * 16;
+        decode_cycles = nvdec_status->cycle_count * 16;
     } else {
         nvjpg_status = (nvjpg_dec_status *)(mem + ctx->status_off);
         if (nvjpg_status->error_status != 0 || nvjpg_status->bytes_offset == 0)
             return AVERROR_UNKNOWN;
 
-        decode_cycles = nvjpg_status->decode_cycles;
+        decode_cycles = nvjpg_status->cycle_count;
     }
 
     /* Decode time in µs: decode_cycles * 1000000 / ctx->channel->clock */

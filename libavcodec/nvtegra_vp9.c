@@ -606,7 +606,7 @@ static int nvtegra_vp9_end_frame(AVCodecContext *avctx) {
     mem = av_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
 
     setup = (nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off);
-    setup->bitstream_size = ctx->core.bitstream_len;
+    setup->stream_len = ctx->core.bitstream_len;
 
     err = nvtegra_vp9_prepare_cmdbuf(&ctx->core.cmdbuf, h, ctx, frame);
     if (err < 0)

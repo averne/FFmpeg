@@ -588,7 +588,7 @@ static int nvtegra_hevc_end_frame(AVCodecContext *avctx) {
     mem = av_nvtegra_map_get_addr((AVNVTegraMap *)tf->input_map_ref->data);
 
     setup = (nvdec_hevc_pic_s *)(mem + ctx->core.pic_setup_off);
-    setup->bitstream_size = ctx->core.bitstream_len;
+    setup->stream_len = ctx->core.bitstream_len;
 
     err = nvtegra_hevc_prepare_cmdbuf(&ctx->core.cmdbuf, s, ctx, frame);
     if (err < 0)

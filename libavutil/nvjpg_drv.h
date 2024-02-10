@@ -23,6 +23,19 @@
 
 #ifndef NVJPG_DRV_H
 #define NVJPG_DRV_H
+
+#include <stdint.h>
+
+typedef uint8_t  NvU8;
+typedef uint16_t NvU16;
+typedef uint32_t NvU32;
+typedef uint64_t NvU64;
+typedef  int8_t  NvS8;
+typedef  int16_t NvS16;
+typedef  int32_t NvS32;
+typedef  int64_t NvS64;
+typedef _Bool    NvBool;
+
 //
 // CLASS NV_E7D0_NVJPG
 //
@@ -94,7 +107,7 @@ typedef struct
     unsigned int bitstream_size; //exact residual part bitstram size of current image
     unsigned int mcu_x;          //encoded mcu_x
     unsigned int mcu_y;          //encoded mcu_y
-    unsigned int reserved0;
+    unsigned int cycle_count;
     unsigned int error_status;   //report error if any
     unsigned char reserved1[12];
 }nvjpg_enc_status;
@@ -169,7 +182,7 @@ typedef struct
     unsigned int bytes_offset; //bytes consumed by HW
     unsigned int mcu_x;        //decoded mcu_x
     unsigned int mcu_y;        //decoded mcu_y
-    unsigned int decode_cycles;
+    unsigned int cycle_count;
     unsigned int error_status; //report error if any
     unsigned char reserved1[12];
 }nvjpg_dec_status;
