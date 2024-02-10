@@ -34,7 +34,7 @@
 #include "libavutil/nvtegra_host1x.h"
 
 typedef struct NVTegraVC1DecodeContext {
-    NVTegraDecodeContext core;
+    FFNVTegraDecodeContext core;
 
     AVNVTegraMap common_map;
     uint32_t coloc_off, history_off, scratch_off;
@@ -247,9 +247,9 @@ static void nvtegra_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
 static int nvtegra_vc1_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, VC1Context *v, NVTegraVC1DecodeContext *ctx,
                                       AVFrame *cur_frame, AVFrame *prev_frame, AVFrame *next_frame)
 {
-    FrameDecodeData    *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    NVTegraFrame        *tf = fdd->hwaccel_priv;
-    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
+    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int err;
 
@@ -322,7 +322,7 @@ static int nvtegra_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    NVTegraFrame *tf;
+    FFNVTegraDecodeFrame *tf;
     AVNVTegraMap *input_map;
     uint8_t *mem;
     int err;
@@ -353,7 +353,7 @@ static int nvtegra_vc1_end_frame(AVCodecContext *avctx) {
     NVTegraVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = v->s.current_picture.f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame             *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame     *tf = fdd->hwaccel_priv;
 
     nvdec_vc1_pic_s *setup;
     uint8_t *mem;
@@ -387,7 +387,7 @@ static int nvtegra_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     NVTegraVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = v->s.current_picture.f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame             *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame     *tf = fdd->hwaccel_priv;
     AVNVTegraMap      *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     nvdec_vc1_pic_s *setup;

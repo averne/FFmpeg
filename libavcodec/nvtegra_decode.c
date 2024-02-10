@@ -42,7 +42,7 @@ static void nvtegra_input_map_free(void *opaque, uint8_t *data) {
 }
 
 static AVBufferRef *nvtegra_input_map_alloc(void *opaque, size_t size) {
-    NVTegraDecodeContext *ctx = opaque;
+    FFNVTegraDecodeContext *ctx = opaque;
 
     AVBufferRef  *buffer;
     AVNVTegraMap *map;
@@ -72,7 +72,7 @@ fail:
     return NULL;
 }
 
-int ff_nvtegra_decode_init(AVCodecContext *avctx, NVTegraDecodeContext *ctx) {
+int ff_nvtegra_decode_init(AVCodecContext *avctx, FFNVTegraDecodeContext *ctx) {
     AVHWFramesContext      *frames_ctx;
     AVHWDeviceContext      *hw_device_ctx;
     AVNVTegraDeviceContext *device_hwctx;
@@ -121,7 +121,7 @@ fail:
     return err;
 }
 
-int ff_nvtegra_decode_uninit(AVCodecContext *avctx, NVTegraDecodeContext *ctx) {
+int ff_nvtegra_decode_uninit(AVCodecContext *avctx, FFNVTegraDecodeContext *ctx) {
     AVHWFramesContext    *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     AVHWDeviceContext *hw_device_ctx = (AVHWDeviceContext *)frames_ctx->device_ref->data;
 
@@ -137,8 +137,8 @@ int ff_nvtegra_decode_uninit(AVCodecContext *avctx, NVTegraDecodeContext *ctx) {
 }
 
 static void nvtegra_fdd_priv_free(void *priv) {
-    NVTegraFrame          *tf = priv;
-    NVTegraDecodeContext *ctx = tf->ctx;
+    FFNVTegraDecodeFrame    *tf = priv;
+    FFNVTegraDecodeContext *ctx = tf->ctx;
 
     if (!tf)
         return;
@@ -152,8 +152,8 @@ static void nvtegra_fdd_priv_free(void *priv) {
 
 int ff_nvtegra_wait_decode(void *logctx, AVFrame *frame) {
     FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame                 *tf = fdd->hwaccel_priv;
-    NVTegraDecodeContext        *ctx = tf->ctx;
+    FFNVTegraDecodeFrame         *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeContext      *ctx = tf->ctx;
     AVNVTegraMap          *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
     AVHWDeviceContext *hw_device_ctx = (AVHWDeviceContext *)ctx->hw_device_ref->data;
 
@@ -196,11 +196,11 @@ int ff_nvtegra_wait_decode(void *logctx, AVFrame *frame) {
     return 0;
 }
 
-int ff_nvtegra_start_frame(AVCodecContext *avctx, AVFrame *frame, NVTegraDecodeContext *ctx) {
+int ff_nvtegra_start_frame(AVCodecContext *avctx, AVFrame *frame, FFNVTegraDecodeContext *ctx) {
     AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
 
-    NVTegraFrame *tf = NULL;
+    FFNVTegraDecodeFrame *tf = NULL;
     int err;
 
     /* Abort on resolution changes that wouldn't fit into the frame */
@@ -258,10 +258,10 @@ fail:
 int ff_nvtegra_decode_slice(AVCodecContext *avctx, AVFrame *frame,
                             const uint8_t *buf, uint32_t buf_size, bool add_startcode)
 {
-    NVTegraDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    FrameDecodeData      *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame          *tf = fdd->hwaccel_priv;
-    AVNVTegraMap   *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FFNVTegraDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    FrameDecodeData        *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FFNVTegraDecodeFrame    *tf = fdd->hwaccel_priv;
+    AVNVTegraMap     *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     bool need_bitstream_move = false;
     uint32_t old_bitstream_off, startcode_size;
@@ -330,12 +330,12 @@ int ff_nvtegra_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     return 0;
 }
 
-int ff_nvtegra_end_frame(AVCodecContext *avctx, AVFrame *frame, NVTegraDecodeContext *ctx,
+int ff_nvtegra_end_frame(AVCodecContext *avctx, AVFrame *frame, FFNVTegraDecodeContext *ctx,
                          const uint8_t *end_sequence, int end_sequence_size)
 {
-    FrameDecodeData    *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame        *tf = fdd->hwaccel_priv;
-    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
+    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     uint8_t *mem;
     int err;

@@ -33,7 +33,7 @@
 #include "libavutil/nvtegra_host1x.h"
 
 typedef struct NVTegraVP8DecodeContext {
-    NVTegraDecodeContext core;
+    FFNVTegraDecodeContext core;
 
     AVNVTegraMap common_map;
     uint32_t prob_data_off, history_off;
@@ -190,9 +190,9 @@ static void nvtegra_vp8_prepare_frame_setup(nvdec_vp8_pic_s *setup, VP8Context *
 static int nvtegra_vp8_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, VP8Context *h,
                                       NVTegraVP8DecodeContext *ctx, AVFrame *cur_frame)
 {
-    FrameDecodeData    *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    NVTegraFrame        *tf = fdd->hwaccel_priv;
-    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
+    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int err;
 
@@ -250,7 +250,7 @@ static int nvtegra_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    NVTegraFrame *tf;
+    FFNVTegraDecodeFrame *tf;
     AVNVTegraMap *input_map;
     uint8_t *mem;
     int err;
@@ -281,7 +281,7 @@ static int nvtegra_vp8_end_frame(AVCodecContext *avctx) {
     NVTegraVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame             *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame     *tf = fdd->hwaccel_priv;
 
     nvdec_vp8_pic_s *setup;
     uint8_t *mem;

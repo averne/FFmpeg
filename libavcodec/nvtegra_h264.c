@@ -35,7 +35,7 @@
 #include "libavutil/nvtegra_host1x.h"
 
 typedef struct NVTegraH264DecodeContext {
-    NVTegraDecodeContext core;
+    FFNVTegraDecodeContext core;
 
     AVNVTegraMap common_map;
     uint32_t coloc_off, mbhist_off, history_off;
@@ -363,9 +363,9 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
 static int nvtegra_h264_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, H264Context *h,
                                        AVFrame *cur_frame, NVTegraH264DecodeContext *ctx)
 {
-    FrameDecodeData    *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    NVTegraFrame        *tf = fdd->hwaccel_priv;
-    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
+    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int err, i;
 
@@ -430,7 +430,7 @@ static int nvtegra_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    NVTegraFrame *tf;
+    FFNVTegraDecodeFrame *tf;
     AVNVTegraMap *input_map;
     uint8_t *mem;
     int err;
@@ -456,7 +456,7 @@ static int nvtegra_h264_end_frame(AVCodecContext *avctx) {
     NVTegraH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                *frame = h->cur_pic_ptr->f;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame              *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame      *tf = fdd->hwaccel_priv;
 
     nvdec_h264_pic_s *setup;
     uint8_t *mem;

@@ -33,7 +33,7 @@
 #include "libavutil/nvtegra_host1x.h"
 
 typedef struct NVTegraHEVCDecodeContext {
-    NVTegraDecodeContext core;
+    FFNVTegraDecodeContext core;
 
     AVNVTegraMap common_map;
     uint32_t tile_sizes_off, scaling_list_off,
@@ -223,7 +223,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
                                              AVFrame *frame, NVTegraHEVCDecodeContext *ctx)
 {
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame              *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame      *tf = fdd->hwaccel_priv;
     AVNVTegraMap       *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
     AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     HEVCContext                *s = avctx->priv_data;
@@ -478,9 +478,9 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
 static int nvtegra_hevc_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, HEVCContext *s,
                                        NVTegraHEVCDecodeContext *ctx, AVFrame *cur_frame)
 {
-    FrameDecodeData    *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    NVTegraFrame        *tf = fdd->hwaccel_priv;
-    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
+    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int i;
     int err;
@@ -546,7 +546,7 @@ static int nvtegra_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    NVTegraFrame *tf;
+    FFNVTegraDecodeFrame *tf;
     AVNVTegraMap *input_map;
     uint8_t *mem;
     int err;
@@ -573,7 +573,7 @@ static int nvtegra_hevc_end_frame(AVCodecContext *avctx) {
     NVTegraHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                *frame = s->ref->frame;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame              *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame      *tf = fdd->hwaccel_priv;
 
     nvdec_hevc_pic_s *setup;
     uint8_t *mem;
@@ -603,7 +603,7 @@ static int nvtegra_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     HEVCContext                *s = avctx->priv_data;
     AVFrame                *frame = s->ref->frame;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame              *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame      *tf = fdd->hwaccel_priv;
     AVNVTegraMap       *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
     NVTegraHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 

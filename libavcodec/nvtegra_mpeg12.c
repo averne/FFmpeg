@@ -34,7 +34,7 @@
 #include "libavutil/nvtegra_host1x.h"
 
 typedef struct NVTegraMPEG12DecodeContext {
-    NVTegraDecodeContext core;
+    FFNVTegraDecodeContext core;
 
     AVFrame *prev_frame, *next_frame;
 } NVTegraMPEG12DecodeContext;
@@ -154,9 +154,9 @@ static void nvtegra_mpeg12_prepare_frame_setup(nvdec_mpeg2_pic_s *setup, MpegEnc
 static int nvtegra_mpeg12_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, MpegEncContext *s, NVTegraMPEG12DecodeContext *ctx,
                                          AVFrame *current_frame, AVFrame *prev_frame, AVFrame *next_frame)
 {
-    FrameDecodeData    *fdd = (FrameDecodeData *)current_frame->private_ref->data;
-    NVTegraFrame        *tf = fdd->hwaccel_priv;
-    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)current_frame->private_ref->data;
+    FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
+    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int err, codec_id;
 
@@ -220,7 +220,7 @@ static int nvtegra_mpeg12_start_frame(AVCodecContext *avctx, const uint8_t *buf,
     FrameDecodeData            *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraMPEG12DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    NVTegraFrame *tf;
+    FFNVTegraDecodeFrame *tf;
     AVNVTegraMap *input_map;
     uint8_t *mem;
     int err;
@@ -249,7 +249,7 @@ static int nvtegra_mpeg12_end_frame(AVCodecContext *avctx) {
     NVTegraMPEG12DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                  *frame = s->current_picture.f;
     FrameDecodeData            *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame                *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame        *tf = fdd->hwaccel_priv;
 
     nvdec_mpeg2_pic_s *setup;
     uint8_t *mem;

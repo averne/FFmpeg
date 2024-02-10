@@ -32,7 +32,7 @@
 #include "libavutil/nvtegra_host1x.h"
 
 typedef struct NVTegraMJPEGDecodeContext {
-    NVTegraDecodeContext core;
+    FFNVTegraDecodeContext core;
 } NVTegraMJPEGDecodeContext;
 
 static int nvtegra_mjpeg_decode_uninit(AVCodecContext *avctx) {
@@ -188,9 +188,9 @@ static void nvtegra_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, 
 static int nvtegra_mjpeg_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, MJpegDecodeContext *s,
                                         NVTegraMJPEGDecodeContext *ctx, AVFrame *current_frame)
 {
-    FrameDecodeData    *fdd = (FrameDecodeData *)current_frame->private_ref->data;
-    NVTegraFrame        *tf = fdd->hwaccel_priv;
-    AVNVTegraMap *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)current_frame->private_ref->data;
+    FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
+    AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     int err;
 
@@ -250,7 +250,7 @@ static int nvtegra_mjpeg_end_frame(AVCodecContext *avctx) {
     NVTegraMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                 *frame = s->picture;
     FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame               *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame       *tf = fdd->hwaccel_priv;
 
     nvjpg_dec_drv_pic_setup_s *setup;
     uint8_t *mem;
@@ -285,7 +285,7 @@ static int nvtegra_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     AVFrame                 *frame = s->picture;
     FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
 
-    NVTegraFrame *tf;
+    FFNVTegraDecodeFrame *tf;
     AVNVTegraMap *input_map;
     uint8_t *mem;
 

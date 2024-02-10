@@ -35,7 +35,7 @@
 #include "libavutil/nvtegra_host1x.h"
 
 typedef struct NVTegraVP9DecodeContext {
-    NVTegraDecodeContext core;
+    FFNVTegraDecodeContext core;
 
     uint32_t prob_tab_off;
 
@@ -459,7 +459,7 @@ static int nvtegra_vp9_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, VP9SharedContext 
                                       NVTegraVP9DecodeContext *ctx, AVFrame *cur_frame)
 {
     FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    NVTegraFrame         *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
     AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
     uint32_t col_mvwrite_off, col_mvread_off;
@@ -540,7 +540,7 @@ static int nvtegra_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    NVTegraFrame *tf;
+    FFNVTegraDecodeFrame *tf;
     AVNVTegraMap *input_map;
     uint8_t *mem, *common_mem;
     int err;
@@ -591,7 +591,7 @@ static int nvtegra_vp9_end_frame(AVCodecContext *avctx) {
     NVTegraVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = h->frames[CUR_FRAME].tf.f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
-    NVTegraFrame             *tf = fdd->hwaccel_priv;
+    FFNVTegraDecodeFrame     *tf = fdd->hwaccel_priv;
 
     nvdec_vp9_pic_s *setup;
     uint8_t *mem, *common_mem;
