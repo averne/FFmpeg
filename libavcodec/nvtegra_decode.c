@@ -26,6 +26,7 @@
 #include "libavutil/intreadwrite.h"
 
 #include "avcodec.h"
+#include "codec_desc.h"
 #include "internal.h"
 #include "decode.h"
 #include "nvtegra_decode.h"
@@ -122,8 +123,8 @@ fail:
 }
 
 int ff_nvtegra_decode_uninit(AVCodecContext *avctx, FFNVTegraDecodeContext *ctx) {
-    AVHWFramesContext    *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
-    AVHWDeviceContext *hw_device_ctx = (AVHWDeviceContext *)frames_ctx->device_ref->data;
+    AVHWFramesContext *frames_ctx;
+    AVHWDeviceContext *hw_device_ctx;
 
     av_buffer_pool_uninit(&ctx->decoder_pool);
 
@@ -131,7 +132,13 @@ int ff_nvtegra_decode_uninit(AVCodecContext *avctx, FFNVTegraDecodeContext *ctx)
 
     av_nvtegra_cmdbuf_deinit(&ctx->cmdbuf);
 
-    av_nvtegra_dfs_uninit(hw_device_ctx, ctx->channel);
+    if (avctx->hw_frames_ctx) {
+        frames_ctx    = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
+        hw_device_ctx = (AVHWDeviceContext *)frames_ctx->device_ref->data;
+
+        av_nvtegra_dfs_uninit(hw_device_ctx, ctx->channel);
+    }
+
 
     return 0;
 }
@@ -390,6 +397,31 @@ int ff_nvtegra_end_frame(AVCodecContext *avctx, AVFrame *frame, FFNVTegraDecodeC
 int ff_nvtegra_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
     AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
     const AVPixFmtDescriptor *sw_desc;
+
+    switch (avctx->codec_id) {
+        /*
+        case AV_CODEC_ID_AV1:
+            if ((avctx->coded_width < 128) || (avctx->coded_height < 128))
+                goto fail;
+            break;
+         */
+
+        case AV_CODEC_ID_VP9:
+        case AV_CODEC_ID_HEVC:
+            if ((avctx->coded_width < 144) || (avctx->coded_height < 144))
+                goto fail;
+            break;
+
+        default:
+            if (avctx->coded_width < 48)
+                goto fail;
+            break;
+
+fail:
+            av_log(avctx, AV_LOG_ERROR, "Dimensions %dx%d are not supported by the hardware for codec %s\n",
+                   avctx->coded_width, avctx->coded_height, avctx->codec_descriptor->name);
+            return AVERROR(EINVAL);
+    }
 
     frames_ctx->format = AV_PIX_FMT_NVTEGRA;
     frames_ctx->width  = FFALIGN(avctx->coded_width,  2); /* NVDEC only supports even sizes */
