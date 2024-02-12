@@ -45,10 +45,11 @@ typedef struct NVTegraHEVCDecodeContext {
     struct NVTegraHEVCRefFrame {
         AVNVTegraMap *map;
         uint32_t chroma_off;
+        int poc;
     } refs[16+1];
 
     uint64_t refs_mask;
-    int8_t cur_frame, scratch_ref;
+    int8_t scratch_ref;
 } NVTegraHEVCDecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -235,7 +236,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     enum RPSType st;
     uint8_t *mem;
     uint16_t *tile_sizes;
-    int output_mode, scratch_ref_diff_poc, i, j;
+    int output_mode, cur_frame, scratch_ref_diff_poc, i, j;
     int8_t dpb_to_ref[16+1] = {0}, ref_to_dpb[16+1] = {0};
     int8_t rps_stcurrbef[8], rps_stcurraft[8], rps_ltcurr[8];
 
@@ -359,26 +360,22 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         */
     };
 
-    /* Remove stale references from our ref list, and start filling the POC for existing frames */
+    /* Remove stale references from our ref list */
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
         if (!(ctx->refs_mask & (1 << i)))
             continue;
 
         for (j = 0; j < FF_ARRAY_ELEMS(s->DPB); ++j) {
-            if (s->DPB[j].frame->buf[0] &&
-                    av_nvtegra_frame_get_fbuf_map(s->DPB[j].frame) == ctx->refs[i].map)
+            if (s->DPB[j].frame->buf[0] && s->DPB[j].poc == ctx->refs[i].poc)
                 break;
         }
 
-        if (j == FF_ARRAY_ELEMS(s->DPB))
+        if (j == FF_ARRAY_ELEMS(s->DPB) || s->DPB[j].poc == s->ref->poc ||
+                !(s->DPB[j].flags & (HEVC_FRAME_FLAG_SHORT_REF | HEVC_FRAME_FLAG_LONG_REF)))
             ctx->refs_mask &= ~(1 << i), ctx->refs[i].map = NULL;
         else
             dpb_to_ref[i] = j, ref_to_dpb[j] = i;
     }
-
-    /* Drop all frames in our ref list on decoder reset */
-    if (IS_IDR(s))
-        ctx->refs_mask = 0;
 
     /* Try to find a valid reference */
     ctx->scratch_ref = -1, scratch_ref_diff_poc = 0;
@@ -396,25 +393,21 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         break;
     }
 
-    /*
-     * Add the current frame to our ref list.
-     * In the case of interlaced video, the new frame can be the same as the last.
-     */
-    if (ctx->refs[ctx->cur_frame].map != av_nvtegra_frame_get_fbuf_map(s->frame)) {
-        setup->curr_pic_idx = ctx->cur_frame = find_slot(&ctx->refs_mask);
-        ctx->refs[ctx->cur_frame] = (struct NVTegraHEVCRefFrame){
-            .map        = av_nvtegra_frame_get_fbuf_map(s->frame),
-            .chroma_off = s->frame->data[1] - s->frame->data[0],
-        };
-    }
+    /* Add the current frame to our ref list */
+    setup->curr_pic_idx = cur_frame = find_slot(&ctx->refs_mask);
+    ctx->refs[cur_frame] = (struct NVTegraHEVCRefFrame){
+        .map        = av_nvtegra_frame_get_fbuf_map(s->frame),
+        .chroma_off = s->frame->data[1] - s->frame->data[0],
+        .poc        = s->ref->poc,
+    };
 
     /* If there were no valid references, use the current frame */
     if (ctx->scratch_ref == -1)
-        ctx->scratch_ref = ctx->cur_frame;
+        ctx->scratch_ref = cur_frame;
 
-    /* Fill the remaining entries with the scratch reference */
+    /* Fill the POC metadata */
     for (i = 0; i < FF_ARRAY_ELEMS(setup->RefDiffPicOrderCnts); ++i) {
-        if (i == ctx->cur_frame)
+        if (i == cur_frame)
             continue;
 
         if (ctx->refs_mask & (1 << i)) {
@@ -447,6 +440,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     i += len;                                     \
 })
 
+    /* Fill the RPS metadata */
     if (s->rps[ST_CURR_BEF].nb_refs + s->rps[ST_CURR_AFT].nb_refs + s->rps[LT_CURR].nb_refs) {
         for (i = 0; i < 16;) {
             FILL_REFLIST(initreflistidxl0, ST_CURR_BEF, rps_stcurrbef);
