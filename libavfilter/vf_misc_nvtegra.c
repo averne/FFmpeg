@@ -471,30 +471,32 @@ static const AVFilterPad nvtegra_spatialfilter_outputs[] = {
 
 #if CONFIG_SHARPNESS_NVTEGRA_FILTER
 const AVFilter ff_vf_sharpness_nvtegra = {
-    .name           = "sharpness_nvtegra",
-    .description    = NULL_IF_CONFIG_SMALL("NVTegra accelerated sharpening"),
-    .priv_size      = sizeof(NVTegraSpatialFilterContext),
-    .init           = &ff_nvtegra_vpp_ctx_init,
-    .uninit         = &ff_nvtegra_vpp_ctx_uninit,
+    .name            = "sharpness_nvtegra",
+    .description     = NULL_IF_CONFIG_SMALL("NVTegra accelerated sharpening"),
+    .priv_size       = sizeof(NVTegraSpatialFilterContext),
+    .init            = &ff_nvtegra_vpp_ctx_init,
+    .uninit          = &nvtegra_spatialfilter_uninit,
+    .process_command = ff_filter_process_command,
     FILTER_INPUTS(nvtegra_spatialfilter_inputs),
     FILTER_OUTPUTS(nvtegra_spatialfilter_outputs),
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_NVTEGRA),
-    .priv_class     = &nvtegra_sharpness_class,
-    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
+    .priv_class      = &nvtegra_sharpness_class,
+    .flags_internal  = FF_FILTER_FLAG_HWFRAME_AWARE,
 };
 #endif
 
 #if CONFIG_DENOISE_NVTEGRA_FILTER
 const AVFilter ff_vf_denoise_nvtegra = {
-    .name           = "denoise_nvtegra",
-    .description    = NULL_IF_CONFIG_SMALL("NVTegra accelerated denoising"),
-    .priv_size      = sizeof(NVTegraSpatialFilterContext),
-    .init           = &ff_nvtegra_vpp_ctx_init,
-    .uninit         = &ff_nvtegra_vpp_ctx_uninit,
+    .name            = "denoise_nvtegra",
+    .description     = NULL_IF_CONFIG_SMALL("NVTegra accelerated denoising"),
+    .priv_size       = sizeof(NVTegraSpatialFilterContext),
+    .init            = &ff_nvtegra_vpp_ctx_init,
+    .uninit          = &nvtegra_spatialfilter_uninit,
+    .process_command = &ff_filter_process_command,
     FILTER_INPUTS(nvtegra_spatialfilter_inputs),
     FILTER_OUTPUTS(nvtegra_spatialfilter_outputs),
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_NVTEGRA),
-    .priv_class     = &nvtegra_denoise_class,
-    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
+    .priv_class      = &nvtegra_denoise_class,
+    .flags_internal  = FF_FILTER_FLAG_HWFRAME_AWARE,
 };
 #endif
