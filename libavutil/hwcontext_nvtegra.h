@@ -46,11 +46,18 @@ typedef struct AVNVTegraDeviceContext {
     bool has_nvdec, has_nvjpg;
 } AVNVTegraDeviceContext;
 
+typedef struct AVNVTegraFrame {
+    /*
+     * Reference to an AVNVTegraMap object
+     */
+    AVBufferRef *map_ref;
+} AVNVTegraFrame;
+
 /*
  * Helper to retrieve a map object from the corresponding frame
  */
 static inline AVNVTegraMap *av_nvtegra_frame_get_fbuf_map(const AVFrame *frame) {
-    return (AVNVTegraMap *)frame->buf[0]->data;
+    return (AVNVTegraMap *)((AVNVTegraFrame *)frame->buf[0]->data)->map_ref->data;
 }
 
 /*

@@ -22,7 +22,6 @@
 
 #include "config.h"
 #include "pixdesc.h"
-#include "pixfmt.h"
 #include "imgutils.h"
 #include "internal.h"
 #include "time.h"
@@ -381,12 +380,10 @@ static int nvtegra_frames_get_constraints(AVHWDeviceContext *ctx, const void *hw
     return 0;
 }
 
-static void nvtegra_buffer_free(void *opaque, uint8_t *data) {
+static void nvtegra_map_free(void *opaque, uint8_t *data) {
     AVNVTegraMap *map = (AVNVTegraMap *)data;
 
-    av_log(opaque, AV_LOG_DEBUG, "Freeing surface from NVTEGRA device\n");
-
-    if (!data)
+    if (!map)
         return;
 
     av_nvtegra_map_destroy(map);
@@ -394,19 +391,35 @@ static void nvtegra_buffer_free(void *opaque, uint8_t *data) {
     av_freep(&map);
 }
 
+static void nvtegra_frame_free(void *opaque, uint8_t *data) {
+    AVNVTegraFrame *frame = (AVNVTegraFrame *)data;
+
+    if (!frame)
+        return;
+
+    av_buffer_unref(&frame->map_ref);
+
+    av_freep(&frame);
+}
+
 static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
     AVHWFramesContext        *ctx = opaque;
     AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
 
-    AVBufferRef *buffer;
-    AVNVTegraMap *map;
+    AVBufferRef *buffer = NULL;
+    AVNVTegraFrame *frame = NULL;
+    AVNVTegraMap *map = NULL;
     int err;
 
     av_log(ctx, AV_LOG_DEBUG, "Creating surface from NVTEGRA device\n");
 
     map = av_mallocz(sizeof(*map));
     if (!map)
-        return NULL;
+        goto fail;
+
+    frame = av_mallocz(sizeof(*frame));
+    if (!map)
+        goto fail;
 
     /*
      * Framebuffers are allocated as CPU-cacheable, since they might get copied from
@@ -421,7 +434,11 @@ static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
     av_nvtegra_map_cache_op(map, NVMAP_CACHE_OP_WB, av_nvtegra_map_get_addr(map),
                             av_nvtegra_map_get_size(map));
 
-    buffer = av_buffer_create((uint8_t *)map, sizeof(*map), nvtegra_buffer_free, ctx, 0);
+    frame->map_ref = av_buffer_create((uint8_t *)map, sizeof(*map), nvtegra_map_free, ctx, 0);
+    if (!frame->map_ref)
+        goto fail;
+
+    buffer = av_buffer_create((uint8_t *)frame, sizeof(*frame), nvtegra_frame_free, ctx, 0);
     if (!buffer)
         goto fail;
 
@@ -429,8 +446,7 @@ static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
 
 fail:
     av_log(ctx, AV_LOG_ERROR, "Failed to create buffer\n");
-    av_nvtegra_map_destroy(map);
-    av_freep(map);
+    nvtegra_frame_free(opaque, (uint8_t *)frame);
     return NULL;
 }
 
