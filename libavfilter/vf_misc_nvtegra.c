@@ -27,6 +27,7 @@
 #include "libavutil/nvtegra_host1x.h"
 
 #include "avfilter.h"
+#include "video.h"
 #include "internal.h"
 
 #include "nvtegra_vpp.h"
@@ -236,6 +237,15 @@ static uint32_t g_VicFilterData[] = {
     0x02508c24, 0x02509025, 0x02408c23, 0x02409024, 0x01f0681d, 0x0200681d, 0x01a0641a, 0x01b0681a, 0x01303c11, 0x01304011, 0x01003c0f, 0x01003c10, 0x00501005, 0x00601405, 0x00401404, 0x00501405,
 };
 
+static void nvtegra_spatialfilter_uninit(AVFilterContext *avctx) {
+    NVTegraSpatialFilterContext *ctx = avctx->priv;
+
+    if (ctx->has_filter_init)
+        av_nvtegra_map_destroy(&ctx->filter_map);
+
+    ff_nvtegra_vpp_ctx_uninit(avctx);
+}
+
 static int nvtegra_spatialfilter_init_filter_map(NVTegraSpatialFilterContext *ctx) {
     int err;
 
@@ -362,15 +372,11 @@ static int nvtegra_spatialfilter_filter_frame(AVFilterLink *link, AVFrame *in) {
     job    = (AVNVTegraJob *)job_ref->data;
     config = (VicConfigStruct *)((uint8_t *)av_nvtegra_map_get_addr(&job->input_map) + ctx->core.vic_setup_off);
 
-    out = av_frame_alloc();
+    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
     if (!out) {
         err = AVERROR(ENOMEM);
         goto fail;
     }
-
-    err = av_hwframe_get_buffer(outlink->hw_frames_ctx, out, 0);
-    if (err < 0)
-        goto fail;
 
     err = av_frame_copy_props(out, in);
     if (err < 0)

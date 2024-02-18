@@ -31,8 +31,6 @@
 typedef struct FFNVTegraVppContext {
     const AVClass *class;
 
-    AVBufferRef *device_ref;
-
     AVNVTegraJobPool pool;
     off_t vic_setup_off, vic_cmdbuf_off;
     size_t vic_map_size;

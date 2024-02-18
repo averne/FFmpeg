@@ -42,8 +42,6 @@ void ff_nvtegra_vpp_ctx_uninit(AVFilterContext *avctx) {
     FFNVTegraVppContext *ctx = avctx->priv;
 
     av_nvtegra_job_pool_uninit(&ctx->pool);
-
-    av_buffer_unref(&ctx->device_ref);
 }
 
 int ff_nvtegra_vpp_config_input(AVFilterLink *inlink) {
@@ -61,15 +59,18 @@ int ff_nvtegra_vpp_config_input(AVFilterLink *inlink) {
     }
 
     input_frames_ctx = (AVHWFramesContext *)inlink->hw_frames_ctx->data;
-    if (input_frames_ctx->format != AV_PIX_FMT_NVTEGRA)
-        return AVERROR(EINVAL);
+    if (input_frames_ctx->format != AV_PIX_FMT_NVTEGRA) {
+        err = AVERROR(EINVAL);
+        goto fail;
+    }
 
     desc = av_pix_fmt_desc_get(input_frames_ctx->sw_format);
     for (i = 0; i < desc->nb_components; ++i) {
         if (desc->comp[i].depth > 8) {
             av_log(avctx, AV_LOG_ERROR, "Color depth %d > 8 for component %d of format %s unsupported\n",
                    desc->comp[i].depth, i, desc->name);
-            return AVERROR(EINVAL);
+            err = AVERROR(EINVAL);
+            goto fail;
         }
     }
 
@@ -80,14 +81,11 @@ int ff_nvtegra_vpp_config_input(AVFilterLink *inlink) {
 
     if (!input_frames_ctx->device_ref) {
         av_log(avctx, AV_LOG_ERROR, "No hardware context provided on input\n");
-        return AVERROR(EINVAL);
+        err = AVERROR(EINVAL);
+        goto fail;
     }
 
-    ctx->device_ref = av_buffer_ref(input_frames_ctx->device_ref);
-    if (!ctx->device_ref)
-        return AVERROR(ENOMEM);
-
-    device_ctx = ((AVHWDeviceContext *)ctx->device_ref->data)->hwctx;
+    device_ctx = ((AVHWDeviceContext *)input_frames_ctx->device_ref->data)->hwctx;
 
     err = av_nvtegra_job_pool_init(&ctx->pool, &device_ctx->vic_channel,
                                    ctx->vic_map_size, ctx->vic_cmdbuf_off,
@@ -98,7 +96,7 @@ int ff_nvtegra_vpp_config_input(AVFilterLink *inlink) {
     return 0;
 
 fail:
-    av_buffer_unref(&ctx->device_ref);
+    ff_nvtegra_vpp_ctx_uninit(avctx);
     return err;
 }
 
@@ -107,6 +105,7 @@ int ff_nvtegra_vpp_config_output(AVFilterLink *outlink) {
     AVFilterContext   *avctx = outlink->src;
     FFNVTegraVppContext *ctx = avctx->priv;
 
+    AVBufferRef *device_ref;
     AVHWFramesContext *input_hwframes_ctx, *output_hwframes_ctx;
     int err;
 
@@ -119,14 +118,16 @@ int ff_nvtegra_vpp_config_output(AVFilterLink *outlink) {
 
     /* Attempt to reuse the input hardware frame context */
     if ((input_hwframes_ctx->sw_format == ctx->output_format) &&
-            (input_hwframes_ctx->width == ctx->output_width) &&
-            (input_hwframes_ctx->width == ctx->output_width))
+            (input_hwframes_ctx->width  == ctx->output_width) &&
+            (input_hwframes_ctx->height == ctx->output_height))
     {
         outlink->hw_frames_ctx = av_buffer_ref(inlink->hw_frames_ctx);
         if (!outlink->hw_frames_ctx)
             return AVERROR(ENOMEM);
     } else {
-        outlink->hw_frames_ctx = av_hwframe_ctx_alloc(ctx->device_ref);
+        device_ref = avctx->hw_device_ctx ?: input_hwframes_ctx->device_ref;
+
+        outlink->hw_frames_ctx = av_hwframe_ctx_alloc(device_ref);
         if (!outlink->hw_frames_ctx)
             return AVERROR(ENOMEM);
 
