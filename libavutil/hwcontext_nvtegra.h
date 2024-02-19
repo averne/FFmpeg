@@ -30,6 +30,19 @@
 
 #include "nvtegra.h"
 
+/*
+ * Encode a hardware revision into a version number
+ */
+#define AV_NVTEGRA_ENCODE_REV(maj, min) (((maj & 0xff) << 8) | (min & 0xff))
+
+/*
+ * Decode a version number
+ */
+static inline void av_nvtegra_decode_rev(int rev, int *maj, int *min) {
+    *maj = (rev >> 8) & 0xff;
+    *min = (rev >> 0) & 0xff;
+}
+
 /**
  * @file
  * API-specific header for AV_HWDEVICE_TYPE_NVTEGRA.
@@ -42,8 +55,12 @@ typedef struct AVNVTegraDeviceContext {
     /*
      * Hardware multimedia engines
      */
-    AVNVTegraChannel nvdec_channel, nvjpg_channel, vic_channel;
-    bool has_nvdec, has_nvjpg;
+    AVNVTegraChannel nvdec_channel, nvenc_channel, nvjpg_channel, vic_channel;
+
+    /*
+     * Hardware revisions for associated engines, or 0 if invalid
+     */
+    int nvdec_version, nvenc_version, nvjpg_version, vic_version;
 } AVNVTegraDeviceContext;
 
 typedef struct AVNVTegraFrame {

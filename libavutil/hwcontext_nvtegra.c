@@ -230,14 +230,14 @@ static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
 
     av_nvtegra_job_pool_uninit(&priv->job_pool);
 
-    if (hwctx->has_nvdec) {
+    if (hwctx->nvdec_version) {
         av_nvtegra_channel_close(&hwctx->nvdec_channel);
 #ifdef __SWITCH__
         mmuRequestFinalize(&hwctx->nvdec_channel.mmu_request);
 #endif
     }
 
-    if (hwctx->has_nvjpg) {
+    if (hwctx->nvjpg_version) {
         av_nvtegra_channel_close(&hwctx->nvjpg_channel);
 #ifdef __SWITCH__
         mmuRequestFinalize(&hwctx->nvjpg_channel.mmu_request);
@@ -267,23 +267,27 @@ static int nvtegra_device_init(AVHWDeviceContext *ctx) {
     av_log(ctx, AV_LOG_DEBUG, "Initializing NVTEGRA device\n");
 
     err = av_nvtegra_channel_open(&hwctx->nvdec_channel, "/dev/nvhost-nvdec");
-    hwctx->has_nvdec = err == 0;
+    if (!err)
+        hwctx->nvdec_version = AV_NVTEGRA_ENCODE_REV(2,0);
 
     err = av_nvtegra_channel_open(&hwctx->nvjpg_channel, "/dev/nvhost-nvjpg");
-    hwctx->has_nvjpg = err == 0;
+    if (!err)
+        hwctx->nvjpg_version = AV_NVTEGRA_ENCODE_REV(1,0);
 
     err = av_nvtegra_channel_open(&hwctx->vic_channel, "/dev/nvhost-vic");
     if (err < 0)
         goto fail;
 
+    hwctx->vic_version = AV_NVTEGRA_ENCODE_REV(4,0);
+
     /* Note: Official code only sets this for the nvdec channel */
-    if (hwctx->has_nvdec) {
+    if (hwctx->nvdec_version) {
         err = av_nvtegra_channel_set_submit_timeout(&hwctx->nvdec_channel, 1000);
         if (err < 0)
             goto fail;
     }
 
-    if (hwctx->has_nvjpg) {
+    if (hwctx->nvjpg_version) {
         err = av_nvtegra_channel_set_submit_timeout(&hwctx->nvjpg_channel, 1000);
         if (err < 0)
             goto fail;
@@ -308,13 +312,13 @@ static int nvtegra_device_init(AVHWDeviceContext *ctx) {
      * The NVHOST_IOCTL_CHANNEL_SET_CLK_RATE ioctl also exists on HOS but the clock rate
      * will be reset when the console goes to sleep.
      */
-    if (hwctx->has_nvdec) {
+    if (hwctx->nvdec_version) {
         err = AVERROR(mmuRequestInitialize(&hwctx->nvdec_channel.mmu_request, (MmuModuleId)5, 8, false));
         if (err < 0)
             goto fail;
     }
 
-    if (hwctx->has_nvjpg) {
+    if (hwctx->nvjpg_version) {
         err = AVERROR(mmuRequestInitialize(&hwctx->nvjpg_channel.mmu_request, MmuModuleId_Nvjpg, 8, false));
         if (err < 0)
             goto fail;
