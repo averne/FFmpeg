@@ -785,7 +785,7 @@ int av_nvtegra_cmdbuf_push_word(AVNVTegraCmdbuf *cmdbuf, uint32_t word) {
 int av_nvtegra_cmdbuf_push_value(AVNVTegraCmdbuf *cmdbuf, uint32_t offset, uint32_t word) {
     int err;
 
-    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_incr(NV_THI_METHOD0/4, 2));
+    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_incr(NV_THI_METHOD0>>2, 2));
     if (err < 0)
         return err;
 
@@ -856,7 +856,7 @@ int av_nvtegra_cmdbuf_push_wait(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32
     if (err < 0)
         return err;
 
-    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_mask(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD,
+    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_mask(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD>>2,
                                       (1<<(NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD - NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD)) |
                                       (1<<(NV_CLASS_HOST_WAIT_SYNCPT         - NV_CLASS_HOST_LOAD_SYNCPT_PAYLOAD))));
     if (err < 0)

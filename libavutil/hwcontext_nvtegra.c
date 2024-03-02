@@ -1027,7 +1027,7 @@ static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx, AVNVTegraJobPool *
     if (err < 0)
         return err;
 
-    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT, 1));
+    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT>>2, 1));
     if (err < 0)
         return err;
 

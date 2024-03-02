@@ -362,7 +362,7 @@ int ff_nvtegra_end_frame(AVCodecContext *avctx, AVFrame *frame, FFNVTegraDecodeC
     if (err < 0)
         return err;
 
-    err = av_nvtegra_cmdbuf_push_word(&ctx->cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT, 1));
+    err = av_nvtegra_cmdbuf_push_word(&ctx->cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT>>2, 1));
     if (err < 0)
         return err;
 
