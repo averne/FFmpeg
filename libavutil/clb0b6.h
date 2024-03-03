@@ -282,6 +282,13 @@ extern "C" {
 #define NVB0B6_DXVAHD_ALPHA_FILL_MODE_COMPOSITED                                4
 #define NVB0B6_DXVAHD_ALPHA_FILL_MODE_SOURCE_ALPHA                              5
 
+#define NVB0B6_DXVAHD_DEINTERLACE_MODE_PRIVATE_WEAVE                            0
+#define NVB0B6_DXVAHD_DEINTERLACE_MODE_PRIVATE_BOB_FIELD                        1
+#define NVB0B6_DXVAHD_DEINTERLACE_MODE_PRIVATE_BOB                              2
+#define NVB0B6_DXVAHD_DEINTERLACE_MODE_PRIVATE_NEWBOB                           3
+#define NVB0B6_DXVAHD_DEINTERLACE_MODE_PRIVATE_DISI1                            4
+#define NVB0B6_DXVAHD_DEINTERLACE_MODE_PRIVATE_WEAVE_LUMA_BOB_FIELD_CHROMA      5
+
 #define NVB0B6_BLK_KIND_PITCH                                                   0
 #define NVB0B6_BLK_KIND_GENERIC_16Bx2                                           1
 #define NVB0B6_BLK_KIND_BL_NAIVE                                                2
