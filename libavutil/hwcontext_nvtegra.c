@@ -1004,30 +1004,11 @@ static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx, AVNVTegraJobPool *
     AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_EXECUTE,
                           AV_NVTEGRA_ENUM(NVB0B6_VIDEO_COMPOSITOR_EXECUTE, AWAKEN, ENABLE));
 
-    err = av_nvtegra_cmdbuf_end(cmdbuf);
-    if (err < 0)
-        return err;
-
-    /* Insert syncpt increment to signal the end of the transfer */
-    err = av_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_VIC);
-    if (err < 0)
-        return err;
-
-    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT>>2, 1));
-    if (err < 0)
-        return err;
-
-    err = av_nvtegra_cmdbuf_push_word(cmdbuf,
-                                      AV_NVTEGRA_VALUE(NV_THI_INCR_SYNCPT, INDX, pool->channel->syncpt) |
-                                      AV_NVTEGRA_ENUM (NV_THI_INCR_SYNCPT, COND, OP_DONE));
+    err = av_nvtegra_cmdbuf_add_syncpt_incr(cmdbuf, pool->channel->syncpt, 0);
     if (err < 0)
         return err;
 
     err = av_nvtegra_cmdbuf_end(cmdbuf);
-    if (err < 0)
-        return err;
-
-    err = av_nvtegra_cmdbuf_add_syncpt_incr(cmdbuf, pool->channel->syncpt, 1, 0);
     if (err < 0)
         return err;
 

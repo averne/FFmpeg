@@ -849,6 +849,22 @@ int av_nvtegra_cmdbuf_push_reloc(AVNVTegraCmdbuf *cmdbuf, uint32_t offset, AVNVT
 #endif
 }
 
+int av_nvtegra_cmdbuf_push_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt) {
+    int err;
+
+    err = av_nvtegra_cmdbuf_push_word(cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT>>2, 1));
+    if (err < 0)
+        return err;
+
+    err = av_nvtegra_cmdbuf_push_word(cmdbuf,
+                                      AV_NVTEGRA_VALUE(NV_THI_INCR_SYNCPT, INDX, syncpt) |
+                                      AV_NVTEGRA_ENUM (NV_THI_INCR_SYNCPT, COND, OP_DONE));
+    if (err < 0)
+        return err;
+
+    return 0;
+}
+
 int av_nvtegra_cmdbuf_push_wait(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence) {
     int err;
 
@@ -873,8 +889,7 @@ int av_nvtegra_cmdbuf_push_wait(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32
     return 0;
 }
 
-int av_nvtegra_cmdbuf_add_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt,
-                                      uint32_t num_incrs, uint32_t fence)
+int av_nvtegra_cmdbuf_add_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence)
 {
     void *tmp1;
 #ifndef __SWITCH__
@@ -900,7 +915,7 @@ int av_nvtegra_cmdbuf_add_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt,
 
     cmdbuf->syncpt_incrs[cmdbuf->num_syncpt_incrs] = (struct nvhost_syncpt_incr){
         .syncpt_id    = syncpt,
-        .syncpt_incrs = num_incrs,
+        .syncpt_incrs = 1,
     };
 
 #ifndef __SWITCH__
@@ -909,7 +924,7 @@ int av_nvtegra_cmdbuf_add_syncpt_incr(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt,
 
     cmdbuf->num_syncpt_incrs++;
 
-    return 0;
+    return av_nvtegra_cmdbuf_push_syncpt_incr(cmdbuf, syncpt);
 }
 
 int av_nvtegra_cmdbuf_add_waitchk(AVNVTegraCmdbuf *cmdbuf, uint32_t syncpt, uint32_t fence) {

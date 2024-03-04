@@ -357,26 +357,15 @@ int ff_nvtegra_end_frame(AVCodecContext *avctx, AVFrame *frame, FFNVTegraDecodeC
     if (end_sequence_size)
         memcpy(mem + ctx->bitstream_off + ctx->bitstream_len, end_sequence, end_sequence_size);
 
-    /* Insert syncpt increment to signal the end of the decoding */
     err = av_nvtegra_cmdbuf_begin(&ctx->cmdbuf, !ctx->is_nvjpg ? HOST1X_CLASS_NVDEC : HOST1X_CLASS_NVJPG);
     if (err < 0)
         return err;
 
-    err = av_nvtegra_cmdbuf_push_word(&ctx->cmdbuf, host1x_opcode_nonincr(NV_THI_INCR_SYNCPT>>2, 1));
-    if (err < 0)
-        return err;
-
-    err = av_nvtegra_cmdbuf_push_word(&ctx->cmdbuf,
-                                      AV_NVTEGRA_VALUE(NV_THI_INCR_SYNCPT, INDX, ctx->channel->syncpt) |
-                                      AV_NVTEGRA_ENUM (NV_THI_INCR_SYNCPT, COND, OP_DONE));
+    err = av_nvtegra_cmdbuf_add_syncpt_incr(&ctx->cmdbuf, ctx->channel->syncpt, 0);
     if (err < 0)
         return err;
 
     err = av_nvtegra_cmdbuf_end(&ctx->cmdbuf);
-    if (err < 0)
-        return err;
-
-    err = av_nvtegra_cmdbuf_add_syncpt_incr(&ctx->cmdbuf, ctx->channel->syncpt, 1, 0);
     if (err < 0)
         return err;
 
