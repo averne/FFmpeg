@@ -346,20 +346,6 @@ static int nvtegra_device_create(AVHWDeviceContext *ctx, const char *device,
     return 0;
 }
 
-static int nvtegra_device_derive(AVHWDeviceContext *dst_ctx,
-                                 AVHWDeviceContext *src_ctx,
-                                 AVDictionary *opts, int flags)
-{
-
-    NVTegraDevicePriv *src_priv = src_ctx->internal->priv, *dst_priv = dst_ctx->internal->priv;
-
-    dst_priv->driver_state_ref = av_buffer_ref(src_priv->driver_state_ref);
-    if (!dst_priv->driver_state_ref)
-        return AVERROR(ENOMEM);
-
-    return 0;
-}
-
 static int nvtegra_frames_get_constraints(AVHWDeviceContext *ctx, const void *hwconfig,
                                           AVHWFramesConstraints *constraints)
 {
@@ -1224,7 +1210,6 @@ const HWContextType ff_hwcontext_type_nvtegra = {
     .frames_priv_size       = 0,
 
     .device_create          = &nvtegra_device_create,
-    .device_derive          = &nvtegra_device_derive,
     .device_init            = &nvtegra_device_init,
     .device_uninit          = &nvtegra_device_uninit,
 
