@@ -52,94 +52,6 @@ typedef struct NVTegraDevicePriv {
     int64_t dfs_sampling_start_ts, dfs_last_ts_delta;
 } NVTegraDevicePriv;
 
-/* 3x3 color conversion matrix plus 1x3 color offsets */
-static float mat_rgb_to_ycbcr_bt601lim[3][4] = {
-    { 0.25678825,  0.5041294,   0.09790588, 0.0627451 },
-    {-0.1482229,  -0.2909928,   0.4392157,  0.50196075},
-    { 0.4392157,  -0.3677883,  -0.07142737, 0.50196075},
-};
-
-static float mat_rgb_to_ycbcr_bt601full[3][4] = {
-    { 0.29899999,  0.587,       0.114,      0.0       },
-    {-0.16873589, -0.3312641,   0.5,        0.50196075},
-    { 0.5,        -0.41868758, -0.08131241, 0.50196075},
-};
-
-static float mat_rgb_to_ycbcr_bt709lim[3][4] = {
-    { 0.18258588,  0.6142306,   0.06200706, 0.0627451 },
-    {-0.10064201, -0.33856615,  0.43920815, 0.50196075},
-    { 0.4392148,  -0.39894137, -0.04027344, 0.50196075},
-};
-
-static float mat_rgb_to_ycbcr_bt709full[3][4] = {
-    { 0.21259999,  0.7152,      0.0722,     0.0       },
-    {-0.11457014, -0.38542128,  0.49999142, 0.50196075},
-    { 0.49999899, -0.45415199, -0.04584699, 0.50196075},
-};
-
-static float mat_rgb_to_ycbcr_bt2020lim[3][4] = {
-    { 0.22561294,  0.58228236,  0.05092824, 0.0627451 },
-    {-0.12265543, -0.31656027,  0.4392157,  0.50196075},
-    { 0.4392157,  -0.4038902,  -0.0353255,  0.50196075},
-};
-
-/* Note: not dumped from official code */
-static float mat_rgb_to_ycbcr_bt2020full[3][4] = {
-    { 0.2627,      0.678,       0.0593,     0.0       },
-    {-0.13963006, -0.36036994,  0.5,        0.50196075},
-    { 0.5,        -0.4597857,  -0.0402143,  0.50196075},
-};
-
-static float mat_ycbcr_bt601lim_to_rgb[3][4] = {
-    {1.1643835,  0.0,         1.5960268,  -0.8742022},
-    {1.1643835, -0.3917623,  -0.81296766,  0.5316678},
-    {1.1643835,  2.0172322,   0.0,        -1.0856308},
-};
-
-static float mat_ycbcr_bt601full_to_rgb[3][4] = {
-    {1.0,        0.0,         1.402,      -0.703749 },
-    {1.0,       -0.3441363,  -0.7141363,   0.5312113},
-    {1.0,        1.772,       0.0,        -0.8894745},
-};
-
-static float mat_ycbcr_bt709lim_to_rgb[3][4] = {
-    {1.1643835,  0.0,         1.7927446,  -0.9729469},
-    {1.1643835, -0.21325228, -0.5329104,   0.3014850},
-    {1.1643835,  2.112438,    0.0,        -1.1334205},
-};
-
-static float mat_ycbcr_bt709full_to_rgb[3][4] = {
-    {1.0,        0.0,         1.5748031,  -0.7904894},
-    {1.0,       -0.18732749, -0.46812522,  0.3290116},
-    {1.0,        1.8556318,   0.0,        -0.9314544},
-};
-
-static float mat_ycbcr_bt2020lim_to_rgb[3][4] = {
-    {1.1643835,  0.0,         1.6786741,  -0.9156879},
-    {1.1643835, -0.1873261,  -0.6504243,   0.3474585},
-    {1.1643835,  2.1417723,   0.0,        -1.1481451},
-};
-
-/* Note: not dumped from official code */
-static float mat_ycbcr_bt2020full_to_rgb[3][4] = {
-    {1.0,        0.0,         1.4746,     -0.7401914},
-    {1.0,       -0.16455313, -0.57135313,  0.3693961},
-    {1.0,        1.8814,      0.0,        -0.9443890},
-};
-
-/* Colorspace rotation matrices */
-static float mat_colorgamut_bt709_to_2020[3][4] = {
-    { 0.6274039,   0.32928303, 0.04331307, 0.0},
-    { 0.06909729,  0.9195404,  0.01136232, 0.0},
-    { 0.01639144,  0.08801331, 0.89559525, 0.0},
-};
-
-static float mat_colorgamut_bt2020_to_bt709[3][4] = {
-    { 1.660491,   -0.5876411, -0.07284986, 0.0},
-    {-0.12455047,  1.1328999, -0.00834942, 0.0},
-    {-0.01815076, -0.1005789,  1.1187297,  0.0},
-};
-
 static const enum AVPixelFormat supported_sw_formats[] = {
     AV_PIX_FMT_GRAY8,
     AV_PIX_FMT_NV12,
@@ -752,30 +664,6 @@ static int nvtegra_cpu_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst,
     return 0;
 }
 
-static inline int pack_to_fixed_point(float val, bool sign, int integer, int fractional) {
-    return (int)(val * (1 << fractional) + 0.5f) &
-        ((1 << sign + integer + fractional) - 1);
-}
-
-static void set_matrix_struct(VicMatrixStruct *dst, float src[3][4],
-                              bool sign, int integer, int fractional)
-{
-    dst->matrix_enable  = 1;
-    dst->matrix_r_shift = fractional - 8;
-    dst->matrix_coeff00 = pack_to_fixed_point(src[0][0], sign, integer, fractional);
-    dst->matrix_coeff10 = pack_to_fixed_point(src[1][0], sign, integer, fractional);
-    dst->matrix_coeff20 = pack_to_fixed_point(src[2][0], sign, integer, fractional);
-    dst->matrix_coeff01 = pack_to_fixed_point(src[0][1], sign, integer, fractional);
-    dst->matrix_coeff11 = pack_to_fixed_point(src[1][1], sign, integer, fractional);
-    dst->matrix_coeff21 = pack_to_fixed_point(src[2][1], sign, integer, fractional);
-    dst->matrix_coeff02 = pack_to_fixed_point(src[0][2], sign, integer, fractional);
-    dst->matrix_coeff12 = pack_to_fixed_point(src[1][2], sign, integer, fractional);
-    dst->matrix_coeff22 = pack_to_fixed_point(src[2][2], sign, integer, fractional);
-    dst->matrix_coeff03 = (int)(src[0][3] * 0x3ff00 + 0.5f);
-    dst->matrix_coeff13 = (int)(src[1][3] * 0x3ff00 + 0.5f);
-    dst->matrix_coeff23 = (int)(src[2][3] * 0x3ff00 + 0.5f);
-}
-
 static void nvtegra_vic_preprare_config(VicConfigStruct *config, const AVFrame *src, const AVFrame *dst,
                                         enum AVPixelFormat fmt, bool is_16b_chroma)
 {
@@ -867,64 +755,6 @@ static void nvtegra_vic_preprare_config(VicConfigStruct *config, const AVFrame *
             },
         },
     };
-
-    /* Disabled for now, applications will handle colorspace conversion themselves */
-    if (false && ((desc->flags & AV_PIX_FMT_FLAG_RGB) || (src->colorspace != dst->colorspace))) {
-        float (*src_mat)[4] = NULL, (*dst_mat)[4] = NULL, (*src_gamut_mat)[4] = NULL;
-
-        switch (src->colorspace) {
-            case AVCOL_SPC_SMPTE170M:
-            default:
-                /* Assume bt601 */
-                src_mat = (src->color_range == AVCOL_RANGE_MPEG) ?
-                    mat_ycbcr_bt601lim_to_rgb  : mat_ycbcr_bt601full_to_rgb;
-                break;
-            case AVCOL_SPC_BT709:
-                config->slotStruct[0].slotConfig.DegammaMode =
-                    config->outputConfig.RegammaMode = 2; /* bt709 gamma curve */
-                src_mat = (src->color_range == AVCOL_RANGE_MPEG) ?
-                    mat_ycbcr_bt709lim_to_rgb  : mat_ycbcr_bt709full_to_rgb;
-                break;
-            case AVCOL_SPC_BT2020_CL:
-            case AVCOL_SPC_BT2020_NCL:
-                config->slotStruct[0].slotConfig.DegammaMode =
-                    config->outputConfig.RegammaMode = 2; /* Nothing available for bt2020 */
-                src_mat = (src->color_range == AVCOL_RANGE_MPEG) ?
-                    mat_ycbcr_bt2020lim_to_rgb : mat_ycbcr_bt2020full_to_rgb;
-                src_gamut_mat = mat_colorgamut_bt2020_to_bt709;
-                break;
-        }
-
-        switch (dst->colorspace) {
-            case AVCOL_SPC_SMPTE170M:
-            default:
-                dst_mat = (dst->color_range == AVCOL_RANGE_MPEG) ?
-                    mat_rgb_to_ycbcr_bt601lim  : mat_rgb_to_ycbcr_bt601full;
-                break;
-            case AVCOL_SPC_BT709:
-                dst_mat = (dst->color_range == AVCOL_RANGE_MPEG) ?
-                    mat_rgb_to_ycbcr_bt709lim  : mat_rgb_to_ycbcr_bt709full;
-                break;
-            case AVCOL_SPC_BT2020_CL:
-            case AVCOL_SPC_BT2020_NCL:
-                dst_mat = (dst->color_range == AVCOL_RANGE_MPEG) ?
-                    mat_rgb_to_ycbcr_bt2020lim : mat_rgb_to_ycbcr_bt2020full;
-                src_gamut_mat = mat_colorgamut_bt709_to_2020;
-                break;
-        }
-
-        if (desc->flags & AV_PIX_FMT_FLAG_RGB)
-            dst_mat = NULL;
-
-        if (src_mat)
-            set_matrix_struct(&config->slotStruct[0].colorMatrixStruct, src_mat, true, 2, 17);
-
-        if (src_gamut_mat)
-            set_matrix_struct(&config->slotStruct[0].gamutMatrixStruct, src_gamut_mat, true, 1, 18);
-
-        if (dst_mat)
-            set_matrix_struct(&config->outColorMatrixStruct, dst_mat, true, 0, 19);
-    }
 }
 
 static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx, AVNVTegraJobPool *pool, AVNVTegraJob *job,
