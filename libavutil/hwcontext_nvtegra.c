@@ -252,8 +252,11 @@ static int nvtegra_device_create(AVHWDeviceContext *ctx, const char *device,
     av_log(ctx, AV_LOG_DEBUG, "Creating NVTEGRA device\n");
 
     priv->driver_state_ref = av_nvtegra_driver_init();
-    if (!priv->driver_state_ref)
+    if (!priv->driver_state_ref) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to create driver context, "
+                                  "make sure you are using a Tegra device\n");
         return AVERROR(ENOSYS);
+    }
 
     return 0;
 }

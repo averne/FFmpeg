@@ -363,7 +363,7 @@ External library support:
   --disable-vdpau          disable Nvidia Video Decode and Presentation API for Unix code [autodetect]
   --disable-videotoolbox   disable VideoToolbox code [autodetect]
   --disable-vulkan         disable Vulkan code [autodetect]
-  --enable-nvtegra         enable nvtegra video decoding
+  --enable-nvtegra         enable nvtegra video decoding [no]
 
 Toolchain options:
   --arch=ARCH              select architecture [$arch]
