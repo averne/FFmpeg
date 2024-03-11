@@ -184,7 +184,7 @@ static void dpb_add(H264Context *h, nvdec_dpb_entry_s *dst,
 }
 
 static inline int find_slot(uint64_t *mask) {
-    int slot = __builtin_ctzll(~*mask);
+    int slot = ff_ctzll(~*mask);
     *mask |= (1 << slot);
     return slot;
 }

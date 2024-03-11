@@ -215,7 +215,7 @@ static enum RPSType find_ref_rps_type(HEVCContext *s, HEVCFrame *f) {
 }
 
 static inline int find_slot(uint64_t *mask) {
-    int slot = __builtin_ctzll(~*mask);
+    int slot = ff_ctzll(~*mask);
     *mask |= (1 << slot);
     return slot;
 }
