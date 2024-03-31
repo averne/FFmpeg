@@ -152,11 +152,8 @@ fail:
     return err;
 }
 
-static int field_poc(int flags, int poc[2], bool top) {
-    if (top)
-        return ((flags & PICT_TOP_FIELD)    && poc[0] != INT_MAX) ? poc[0] : 0;
-    else
-        return ((flags & PICT_BOTTOM_FIELD) && poc[1] != INT_MAX) ? poc[1] : 0;
+static inline int field_poc(int poc[2], bool top) {
+    return (poc[!top] != INT_MAX) ? poc[!top] : 0;
 }
 
 static void dpb_add(H264Context *h, nvdec_dpb_entry_s *dst,
@@ -176,8 +173,8 @@ static void dpb_add(H264Context *h, nvdec_dpb_entry_s *dst,
         .bottom_field_marking = (src->reference & PICT_BOTTOM_FIELD) ? marking : 0,
         .output_memory_layout = 0, /* NV12 */
         .FieldOrderCnt        = {
-            field_poc(src->reference, src->field_poc, true),
-            field_poc(src->reference, src->field_poc, false),
+            field_poc(src->field_poc, true),
+            field_poc(src->field_poc, false),
         },
         .FrameIdx             = src->long_ref ? src->pic_id : src->frame_num,
     };
@@ -254,8 +251,8 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         .output_memory_layout                   = 0, /* NV12 */
 
         .CurrFieldOrderCnt                      = {
-            field_poc(h->picture_structure, h->cur_pic_ptr->field_poc, true),
-            field_poc(h->picture_structure, h->cur_pic_ptr->field_poc, false),
+            field_poc(h->cur_pic_ptr->field_poc, true),
+            field_poc(h->cur_pic_ptr->field_poc, false),
         },
 
         .lossless_ipred8x8_filter_enable        = true,
