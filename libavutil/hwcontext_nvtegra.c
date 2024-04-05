@@ -38,6 +38,9 @@
 #include "hwcontext_nvtegra.h"
 
 typedef struct NVTegraDevicePriv {
+    /* The public AVNVTegraDeviceContext */
+    AVNVTegraDeviceContext p;
+
     AVBufferRef *driver_state_ref;
 
     AVNVTegraJobPool job_pool;
@@ -135,8 +138,8 @@ static int nvtegra_channel_set_freq(AVNVTegraChannel *channel, uint32_t freq) {
 }
 
 static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
-    AVNVTegraDeviceContext *hwctx = ctx->hwctx;
-    NVTegraDevicePriv       *priv = ctx->internal->priv;
+    NVTegraDevicePriv       *priv = ctx->hwctx;
+    AVNVTegraDeviceContext *hwctx = &priv->p;
 
     av_log(ctx, AV_LOG_DEBUG, "Deinitializing NVTEGRA device\n");
 
@@ -170,8 +173,8 @@ static void nvtegra_device_uninit(AVHWDeviceContext *ctx) {
  */
 
 static int nvtegra_device_init(AVHWDeviceContext *ctx) {
-    AVNVTegraDeviceContext *hwctx = ctx->hwctx;
-    NVTegraDevicePriv       *priv = ctx->internal->priv;
+    NVTegraDevicePriv       *priv = ctx->hwctx;
+    AVNVTegraDeviceContext *hwctx = &priv->p;
 
     uint32_t vic_map_size;
     int err;
@@ -247,7 +250,7 @@ fail:
 static int nvtegra_device_create(AVHWDeviceContext *ctx, const char *device,
                                  AVDictionary *opts, int flags)
 {
-    NVTegraDevicePriv *priv = ctx->internal->priv;
+    NVTegraDevicePriv *priv = ctx->hwctx;
 
     av_log(ctx, AV_LOG_DEBUG, "Creating NVTEGRA device\n");
 
@@ -309,7 +312,7 @@ static void nvtegra_frame_free(void *opaque, uint8_t *data) {
 
 static AVBufferRef *nvtegra_pool_alloc(void *opaque, size_t size) {
     AVHWFramesContext        *ctx = opaque;
-    AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
+    AVNVTegraDeviceContext *hwctx = &((NVTegraDevicePriv *)ctx->device_ctx->hwctx)->p;
 
     AVBufferRef *buffer = NULL;
     AVNVTegraFrame *frame = NULL;
@@ -369,8 +372,8 @@ static int nvtegra_frames_init(AVHWFramesContext *ctx) {
         size = av_image_get_buffer_size(ctx->sw_format, width_aligned, height_aligned,
                                         nvtegra_surface_get_width_align(ctx->format, &desc->comp[0]));
 
-        ctx->internal->pool_internal = av_buffer_pool_init2(size, ctx, nvtegra_pool_alloc, NULL);
-        if (!ctx->internal->pool_internal)
+        ffhwframesctx(ctx)->pool_internal = av_buffer_pool_init2(size, ctx, nvtegra_pool_alloc, NULL);
+        if (!ffhwframesctx(ctx)->pool_internal)
             return AVERROR(ENOMEM);
     }
 
@@ -426,7 +429,7 @@ static int nvtegra_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
 int av_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int width, int height,
                         double framerate_hz)
 {
-    NVTegraDevicePriv *priv = ctx->internal->priv;
+    NVTegraDevicePriv *priv = ctx->hwctx;
 
     uint32_t max_freq, lowcorner;
     int num_mbs, err;
@@ -478,7 +481,7 @@ int av_nvtegra_dfs_init(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int w
 }
 
 int av_nvtegra_dfs_update(AVHWDeviceContext *ctx, AVNVTegraChannel *channel, int bitstream_len, int decode_cycles) {
-    NVTegraDevicePriv *priv = ctx->internal->priv;
+    NVTegraDevicePriv *priv = ctx->hwctx;
 
     double frame_time, avg;
     int64_t now, wl_dt;
@@ -764,7 +767,7 @@ static int nvtegra_vic_prepare_cmdbuf(AVHWFramesContext *ctx, AVNVTegraJobPool *
                                       const AVFrame *src, const AVFrame *dst, enum AVPixelFormat fmt,
                                       AVNVTegraMap **plane_maps, uint32_t *plane_offsets, int num_planes)
 {
-    NVTegraDevicePriv *priv = ctx->device_ctx->internal->priv;
+    NVTegraDevicePriv *priv = ctx->device_ctx->hwctx;
     AVNVTegraCmdbuf *cmdbuf = &job->cmdbuf;
 
     AVNVTegraMap *src_maps[4], *dst_maps[4];
@@ -853,7 +856,7 @@ static int nvtegra_vic_copy_plane(AVHWFramesContext *ctx, AVNVTegraJob *job,
                                   enum AVPixelFormat fmt, AVNVTegraMap **plane_maps, uint32_t *plane_offsets,
                                   int num_planes, bool is_chroma)
 {
-    NVTegraDevicePriv *priv = ctx->device_ctx->internal->priv;
+    NVTegraDevicePriv *priv = ctx->device_ctx->hwctx;
 
     uint8_t *mem;
     int err;
@@ -887,8 +890,8 @@ fail:
 static int nvtegra_vic_transfer_data(AVHWFramesContext *ctx, const AVFrame *dst, const AVFrame *src,
                                      int num_planes, bool from)
 {
-    AVNVTegraDeviceContext *hwctx = ctx->device_ctx->hwctx;
-    NVTegraDevicePriv       *priv = ctx->device_ctx->internal->priv;
+    NVTegraDevicePriv       *priv = ctx->device_ctx->hwctx;
+    AVNVTegraDeviceContext *hwctx = &priv->p;
 
     AVBufferRef *job_ref;
     AVNVTegraJob *job;
@@ -1017,11 +1020,9 @@ const HWContextType ff_hwcontext_type_nvtegra = {
     .type                   = AV_HWDEVICE_TYPE_NVTEGRA,
     .name                   = "nvtegra",
 
-    .device_hwctx_size      = sizeof(AVNVTegraDeviceContext),
-    .device_priv_size       = sizeof(NVTegraDevicePriv),
+    .device_hwctx_size      = sizeof(NVTegraDevicePriv),
     .device_hwconfig_size   = 0,
     .frames_hwctx_size      = 0,
-    .frames_priv_size       = 0,
 
     .device_create          = &nvtegra_device_create,
     .device_init            = &nvtegra_device_init,
