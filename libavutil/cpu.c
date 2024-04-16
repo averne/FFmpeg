@@ -252,9 +252,7 @@ int av_cpu_count(void)
 #elif HAVE_WINRT
     GetNativeSystemInfo(&sysinfo);
     nb_cpus = sysinfo.dwNumberOfProcessors;
-#endif
-
-#ifdef __SWITCH__
+#elif defined(__SWITCH__)
     u64 core_mask = 0;
     Result rc = svcGetInfo(&core_mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0);
     nb_cpus = R_SUCCEEDED(rc) ? av_popcount64(core_mask) : 3;

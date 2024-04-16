@@ -7745,6 +7745,10 @@ haiku)
         disable memalign
     fi
     ;;
+horizon)
+    disable sysctl
+    disable sysctlbyname
+    ;;
 esac
 
 flatten_extralibs(){
