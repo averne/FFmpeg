@@ -26,7 +26,9 @@
 #include "config.h"
 #include "attributes.h"
 
-#if ARCH_ARM
+#if ARCH_AARCH64
+#   include "aarch64/intmath.h"
+#elif ARCH_ARM
 #   include "arm/intmath.h"
 #elif ARCH_RISCV
 #   include "riscv/intmath.h"
