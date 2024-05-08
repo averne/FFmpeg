@@ -24,6 +24,7 @@
 #include "pixdesc.h"
 #include "imgutils.h"
 #include "internal.h"
+#include "mem.h"
 #include "time.h"
 
 #include "hwcontext.h"

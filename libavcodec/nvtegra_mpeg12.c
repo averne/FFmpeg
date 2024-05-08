@@ -27,6 +27,7 @@
 #include "internal.h"
 #include "hwconfig.h"
 #include "mpegvideo.h"
+#include "mpegutils.h"
 #include "decode.h"
 #include "nvtegra_decode.h"
 

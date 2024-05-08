@@ -366,7 +366,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
             continue;
 
         for (j = 0; j < FF_ARRAY_ELEMS(s->DPB); ++j) {
-            if (s->DPB[j].frame->buf[0] && s->DPB[j].poc == ctx->refs[i].poc)
+            if (s->DPB[j].frame && s->DPB[j].poc == ctx->refs[i].poc)
                 break;
         }
 

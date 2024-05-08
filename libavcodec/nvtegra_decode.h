@@ -24,6 +24,7 @@
 #include <stdbool.h>
 
 #include "avcodec.h"
+#include "libavutil/mem.h"
 #include "libavutil/hwcontext_nvtegra.h"
 
 #include "libavutil/nvdec_drv.h"
