@@ -383,33 +383,113 @@ int ff_nvtegra_end_frame(AVCodecContext *avctx, AVFrame *frame, FFNVTegraDecodeC
     return 0;
 }
 
+static int nvtegra_get_size_constraints(enum AVCodecID codec,
+                                        int *min_width, int *min_height,
+                                        int *max_width, int *max_height,
+                                        int *align, int *max_mbs)
+{
+    switch (codec) {
+        case AV_CODEC_ID_MPEG1VIDEO:
+        case AV_CODEC_ID_MPEG2VIDEO:
+            *min_width = 48,    *min_height = 1;
+            *max_width = 4096,  *max_height = 4096;
+            *align     = 16,    *max_mbs    = 0x20000;
+            break;
+
+        case AV_CODEC_ID_MPEG4:
+            *min_width = 48,    *min_height = 1;
+            *max_width = 2048,  *max_height = 2048;
+            *align     = 16,    *max_mbs    = 0x2000;
+            break;
+
+        case AV_CODEC_ID_VC1:
+        case AV_CODEC_ID_WMV3:
+            *min_width = 48,    *min_height = 1;
+            *max_width = 2048,  *max_height = 2048;
+            *align     = 1,     *max_mbs    = -1;
+            break;
+
+        case AV_CODEC_ID_H264:
+            *min_width = 48,    *min_height = 1;
+            *max_width = 4096,  *max_height = 4096;
+            *align     = 16,    *max_mbs    = 0x20000;
+            break;
+
+        case AV_CODEC_ID_HEVC:
+            /* Note: on nvdec 4.0+ (tegra 194) max dimensions are 8192, and max mbs 0x80000 */
+            *min_width = 144,   *min_height = 144;
+            *max_width = 4096,  *max_height = 4096;
+            *align     = 64,    *max_mbs    = 0x20000;
+            break;
+
+        case AV_CODEC_ID_VP8:
+            *min_width = 48,    *min_height = 1;
+            *max_width = 4096,  *max_height = 4096;
+            *align     = 16,    *max_mbs    = 0x20000;
+            break;
+
+        case AV_CODEC_ID_VP9:
+            /* Note: on nvdec 4.0+ (tegra 194) max dimensions are 8192, and max mbs 0x40000 */
+            *min_width = 144,   *min_height = 144;
+            *max_width = 4096,  *max_height = 4096;
+            *align     = 16,    *max_mbs    = 0x10000;
+            break;
+
+        case AV_CODEC_ID_MJPEG:
+            *min_width = 1,     *min_height = 1;
+            *max_width = 16384, *max_height = 16384;
+            *align     = 1,     *max_mbs    = -1;
+            break;
+
+        #if 0
+        case AV_CODEC_ID_AV1:
+            /* Note: on nvdec 4.0+ (tegra 194) max dimensions are 8192, and max mbs 0x80000 */
+            *min_width = 128,   *min_height = 128;
+            *max_width = 4096,  *max_height = 4096;
+            *align     = 64,    *max_mbs    = 0x20000;
+            break;
+        #endif
+
+        default:
+            return AVERROR(EINVAL);
+    }
+
+    return 0;
+}
+
 int ff_nvtegra_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
     AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
     const AVPixFmtDescriptor *sw_desc;
 
-    switch (avctx->codec_id) {
-        /*
-        case AV_CODEC_ID_AV1:
-            if ((avctx->coded_width < 128) || (avctx->coded_height < 128))
-                goto fail;
-            break;
-         */
+    int min_width, min_height, max_width, max_height, align, max_mbs,
+        aligned_width, aligned_height, num_mbs;
+    int err;
 
-        case AV_CODEC_ID_VP9:
-        case AV_CODEC_ID_HEVC:
-            if ((avctx->coded_width < 144) || (avctx->coded_height < 144))
-                goto fail;
-            break;
+    err = nvtegra_get_size_constraints(avctx->codec_id, &min_width, &min_height,
+                                       &max_width, &max_height, &align, &max_mbs);
+    if (err < 0)
+        return err;
 
-        default:
-            if (avctx->coded_width < 48)
-                goto fail;
-            break;
+    aligned_width  = FFALIGN(avctx->coded_width,  align);
+    aligned_height = FFALIGN(avctx->coded_height, align);
+    num_mbs = (aligned_width / 16) * (aligned_height / 16);
 
-fail:
-            av_log(avctx, AV_LOG_ERROR, "Dimensions %dx%d are not supported by the hardware for codec %s\n",
-                   avctx->coded_width, avctx->coded_height, avctx->codec_descriptor->name);
-            return AVERROR(EINVAL);
+    if ((aligned_width  < min_width)  || (aligned_width  > max_width) ||
+        (aligned_height < min_height) || (aligned_height > max_height))
+    {
+        av_log(avctx, AV_LOG_ERROR, "Dimensions %dx%d (min. %dx%d, max. %dx%d) "
+                                    "are not supported by the hardware for codec %s\n",
+               avctx->coded_width, avctx->coded_height,
+               min_width, min_height, max_width, max_height,
+               avctx->codec_descriptor->name);
+        return AVERROR(EINVAL);
+    }
+
+    if ((max_mbs > 0) && (num_mbs > max_mbs)) {
+        av_log(avctx, AV_LOG_ERROR, "Number of macroblocks %d exceeds maximum %d "
+                                    "for codec %s\n",
+               num_mbs, max_mbs, avctx->codec_descriptor->name);
+        return AVERROR(EINVAL);
     }
 
     frames_ctx->format = AV_PIX_FMT_NVTEGRA;
