@@ -18,6 +18,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <stdbool.h>
+
 #include "config_components.h"
 
 #include "avcodec.h"
@@ -32,6 +34,11 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/nvtegra_host1x.h"
 
+typedef struct NVTegraHEVCFrameData {
+    bool initialized;
+    uint8_t dpb_idx;
+} NVTegraHEVCFrameData;
+
 typedef struct NVTegraHEVCDecodeContext {
     FFNVTegraDecodeContext core;
 
@@ -42,14 +49,8 @@ typedef struct NVTegraHEVCDecodeContext {
     unsigned int colmv_size, sao_offset, bsd_offset;
     uint8_t pattern_id;
 
-    struct NVTegraHEVCRefFrame {
-        AVNVTegraMap *map;
-        uint32_t chroma_off;
-        int poc;
-    } refs[16+1];
-
-    uint64_t refs_mask;
-    int8_t scratch_ref;
+    HEVCFrame *refs[16], *scratch_ref;
+    uint32_t refs_mask;
 } NVTegraHEVCDecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -214,8 +215,8 @@ static enum RPSType find_ref_rps_type(HEVCContext *s, HEVCFrame *f) {
     return -1;
 }
 
-static inline int find_slot(uint64_t *mask) {
-    int slot = ff_ctzll(~*mask);
+static inline int find_slot(uint32_t *mask) {
+    int slot = ff_ctz(~*mask);
     *mask |= (1 << slot);
     return slot;
 }
@@ -233,11 +234,11 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     const HEVCSPS            *sps = s->ps.sps;
 
     HEVCFrame *fr;
+    NVTegraHEVCFrameData *fr_priv;
     enum RPSType st;
     uint8_t *mem;
     uint16_t *tile_sizes;
     int output_mode, cur_frame, scratch_ref_diff_poc, i, j;
-    int8_t dpb_to_ref[16+1] = {0}, ref_to_dpb[16+1] = {0};
     int8_t rps_stcurrbef[8], rps_stcurraft[8], rps_ltcurr[8];
 
     mem = av_nvtegra_map_get_addr(input_map);
@@ -360,50 +361,51 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         */
     };
 
-    /* Remove stale references from our ref list */
-    for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
-        if (!(ctx->refs_mask & (1 << i)))
-            continue;
+    /*
+     * Decoded frames need to be allocated an index that represents its position
+     * in the data pointers array (pushed to the cmdbuf) and in the metadata
+     * sent to the hardware.
+     * This index must remain fixed until the frame is dropped from the DPB.
+     */
 
-        for (j = 0; j < FF_ARRAY_ELEMS(s->DPB); ++j) {
-            if (s->DPB[j].frame && s->DPB[j].poc == ctx->refs[i].poc)
-                break;
+    /* Build ordered reflist from the DPB */
+    for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); ++i) {
+        fr      = &s->DPB[i];
+        fr_priv = fr->hwaccel_picture_private;
+
+        if ((fr->flags & (HEVC_FRAME_FLAG_LONG_REF | HEVC_FRAME_FLAG_SHORT_REF)) &&
+            (fr != s->ref) && fr_priv->initialized)
+        {
+            ctx->refs[fr_priv->dpb_idx] = fr;
+            ctx->refs_mask |= 1 << fr_priv->dpb_idx;
         }
-
-        if (j == FF_ARRAY_ELEMS(s->DPB) || s->DPB[j].poc == s->ref->poc ||
-                !(s->DPB[j].flags & (HEVC_FRAME_FLAG_SHORT_REF | HEVC_FRAME_FLAG_LONG_REF)))
-            ctx->refs_mask &= ~(1 << i), ctx->refs[i].map = NULL;
-        else
-            dpb_to_ref[i] = j, ref_to_dpb[j] = i;
     }
 
-    /* Try to find a valid reference */
-    ctx->scratch_ref = -1, scratch_ref_diff_poc = 0;
+    /* Try to find a valid reference, or use the current one */
+    ctx->scratch_ref = s->ref, scratch_ref_diff_poc = 0;
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
-        if (!(ctx->refs_mask & (1 << i)) ||
-                (ctx->refs[i].map == av_nvtegra_frame_get_fbuf_map(s->frame)))
+        fr = ctx->refs[i];
+        if (!(ctx->refs_mask & (1 << i)) || (fr == s->ref))
             continue;
 
-        st = find_ref_rps_type(s, &s->DPB[dpb_to_ref[i]]);
+        st = find_ref_rps_type(s, fr);
         if ((st != ST_CURR_BEF) && (st != ST_CURR_AFT) && (st != LT_CURR))
             continue;
 
-        ctx->scratch_ref     = i;
-        scratch_ref_diff_poc = av_clip_int8(s->ref->poc - s->DPB[dpb_to_ref[i]].poc);
+        ctx->scratch_ref     = fr;
+        scratch_ref_diff_poc = av_clip_int8(s->ref->poc - fr->poc);
         break;
     }
 
     /* Add the current frame to our ref list */
     setup->curr_pic_idx = cur_frame = find_slot(&ctx->refs_mask);
-    ctx->refs[cur_frame] = (struct NVTegraHEVCRefFrame){
-        .map        = av_nvtegra_frame_get_fbuf_map(s->frame),
-        .chroma_off = s->frame->data[1] - s->frame->data[0],
-        .poc        = s->ref->poc,
-    };
+    ctx->refs[cur_frame] = s->ref;
 
-    /* If there were no valid references, use the current frame */
-    if (ctx->scratch_ref == -1)
-        ctx->scratch_ref = cur_frame;
+    fr_priv = s->ref->hwaccel_picture_private;
+    *fr_priv = (NVTegraHEVCFrameData){
+        .dpb_idx     = cur_frame,
+        .initialized = true,
+    };
 
     /* Fill the POC metadata */
     for (i = 0; i < FF_ARRAY_ELEMS(setup->RefDiffPicOrderCnts); ++i) {
@@ -411,7 +413,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
             continue;
 
         if (ctx->refs_mask & (1 << i)) {
-            fr = &s->DPB[dpb_to_ref[i]];
+            fr = ctx->refs[i];
             setup->RefDiffPicOrderCnts[i] = av_clip_int8(s->ref->poc - fr->poc);
             setup->longtermflag |= !!(fr->flags & HEVC_FRAME_FLAG_LONG_REF) << (15 - i);
         } else {
@@ -419,15 +421,15 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         }
     }
 
-#define RPS_TO_DPB_IDX(set, array) ({                  \
-    for (i = 0; i < s->rps[set].nb_refs; ++i) {        \
-        for (j = 0; j < FF_ARRAY_ELEMS(s->DPB); ++j) { \
-            if (s->rps[set].ref[i] == &s->DPB[j]) {    \
-                array[i] = ref_to_dpb[j];              \
-                break;                                 \
-            }                                          \
-        }                                              \
-    }                                                  \
+#define RPS_TO_DPB_IDX(set, array) ({                       \
+    for (i = 0; i < s->rps[set].nb_refs; ++i) {             \
+        for (j = 0; j < FF_ARRAY_ELEMS(ctx->refs); ++j) {   \
+            if (s->rps[set].ref[i] == ctx->refs[j]) {       \
+                array[i] = j;                               \
+                break;                                      \
+            }                                               \
+        }                                                   \
+    }                                                       \
 })
 
     RPS_TO_DPB_IDX(ST_CURR_BEF, rps_stcurrbef);
@@ -508,18 +510,19 @@ static int nvtegra_hevc_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, HEVCContext *s,
     AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_COLOC_DATA_OFFSET,
                           &ctx->common_map, ctx->coloc_off,          NVHOST_RELOC_TYPE_DEFAULT);
 
-#define PUSH_FRAME(ref, offset) ({                                                \
-    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4, \
-                          ref.map, 0, NVHOST_RELOC_TYPE_DEFAULT);                 \
-    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4, \
-                          ref.map, ref.chroma_off, NVHOST_RELOC_TYPE_DEFAULT);    \
+#define PUSH_FRAME(fr, offset) ({                                                           \
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,           \
+                          av_nvtegra_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,           \
+                          av_nvtegra_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
+                          NVHOST_RELOC_TYPE_DEFAULT);                                       \
 })
 
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
         if (ctx->refs_mask & (1 << i))
-            PUSH_FRAME(ctx->refs[i],                i);
+            PUSH_FRAME(ctx->refs[i]->frame,     i);
         else
-            PUSH_FRAME(ctx->refs[ctx->scratch_ref], i);
+            PUSH_FRAME(ctx->scratch_ref->frame, i);
     }
 
     /* TODO: Dithered 8-bit post-processing, binding to DISPLAY_BUF */
@@ -551,6 +554,9 @@ static int nvtegra_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     err = ff_nvtegra_start_frame(avctx, frame, &ctx->core);
     if (err < 0)
         return err;
+
+    memset(ctx->refs, 0, sizeof(ctx->refs));
+    ctx->refs_mask = 0;
 
     tf = fdd->hwaccel_priv;
     input_map = (AVNVTegraMap *)tf->input_map_ref->data;
@@ -617,17 +623,18 @@ static int nvtegra_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
 
 #if CONFIG_HEVC_NVTEGRA_HWACCEL
 const FFHWAccel ff_hevc_nvtegra_hwaccel = {
-    .p.name         = "hevc_nvtegra",
-    .p.type         = AVMEDIA_TYPE_VIDEO,
-    .p.id           = AV_CODEC_ID_HEVC,
-    .p.pix_fmt      = AV_PIX_FMT_NVTEGRA,
-    .start_frame    = &nvtegra_hevc_start_frame,
-    .end_frame      = &nvtegra_hevc_end_frame,
-    .decode_slice   = &nvtegra_hevc_decode_slice,
-    .init           = &nvtegra_hevc_decode_init,
-    .uninit         = &nvtegra_hevc_decode_uninit,
-    .frame_params   = &ff_nvtegra_frame_params,
-    .priv_data_size = sizeof(NVTegraHEVCDecodeContext),
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name               = "hevc_nvtegra",
+    .p.type               = AVMEDIA_TYPE_VIDEO,
+    .p.id                 = AV_CODEC_ID_HEVC,
+    .p.pix_fmt            = AV_PIX_FMT_NVTEGRA,
+    .start_frame          = &nvtegra_hevc_start_frame,
+    .end_frame            = &nvtegra_hevc_end_frame,
+    .decode_slice         = &nvtegra_hevc_decode_slice,
+    .init                 = &nvtegra_hevc_decode_init,
+    .uninit               = &nvtegra_hevc_decode_uninit,
+    .frame_params         = &ff_nvtegra_frame_params,
+    .frame_priv_data_size = sizeof(NVTegraHEVCFrameData),
+    .priv_data_size       = sizeof(NVTegraHEVCDecodeContext),
+    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

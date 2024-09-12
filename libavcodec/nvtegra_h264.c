@@ -34,6 +34,12 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/nvtegra_host1x.h"
 
+typedef struct NVTegraH264FrameData {
+    uint8_t pic_idx;
+    uint8_t dpb_idx;
+    bool pic_initialized, dpb_initialized;
+} NVTegraH264FrameData;
+
 typedef struct NVTegraH264DecodeContext {
     FFNVTegraDecodeContext core;
 
@@ -41,17 +47,8 @@ typedef struct NVTegraH264DecodeContext {
     uint32_t coloc_off, mbhist_off, history_off;
     uint32_t mbhist_size, history_size;
 
-    struct NVTegraH264RefFrame {
-        AVNVTegraMap *map;
-        uint32_t chroma_off;
-        int16_t frame_num;
-        int16_t pic_id;
-    } refs[16+1];
-
-    uint8_t ordered_dpb_map[16+1],
-        pic_id_map[16+1], scratch_ref, cur_frame;
-
-    uint64_t refs_mask, ordered_dpb_mask, pic_id_mask;
+    H264Picture *dpb[16], *scratch_ref;
+    uint32_t dpb_mask, pic_idx_mask;
 } NVTegraH264DecodeContext;
 
 /* Size (width, height) of a macroblock */
@@ -142,9 +139,6 @@ static int nvtegra_h264_decode_init(AVCodecContext *avctx) {
     ctx->mbhist_size  = mbhist_size;
     ctx->history_size = history_size;
 
-    memset(ctx->ordered_dpb_map, -1, sizeof(ctx->ordered_dpb_map));
-    memset(ctx->pic_id_map,      -1, sizeof(ctx->pic_id_map));
-
     return 0;
 
 fail:
@@ -156,15 +150,14 @@ static inline int field_poc(int poc[2], bool top) {
     return (poc[!top] != INT_MAX) ? poc[!top] : 0;
 }
 
-static void dpb_add(H264Context *h, nvdec_dpb_entry_s *dst,
-                    H264Picture *src, int pic_id)
-{
+static void dpb_add(H264Context *h, nvdec_dpb_entry_s *dst, H264Picture *src) {
+    NVTegraH264FrameData *fr_priv = src->hwaccel_picture_private;
     int marking;
 
     marking = src->long_ref ? 2 : 1;
     *dst = (nvdec_dpb_entry_s){
-        .index                = pic_id,
-        .col_idx              = pic_id,
+        .index                = fr_priv->pic_idx,
+        .col_idx              = fr_priv->pic_idx,
         .state                = src->reference,
         .is_long_term         = src->long_ref,
         .not_existing         = src->invalid_gap,
@@ -180,8 +173,16 @@ static void dpb_add(H264Context *h, nvdec_dpb_entry_s *dst,
     };
 }
 
-static inline int find_slot(uint64_t *mask) {
-    int slot = ff_ctzll(~*mask);
+static inline void register_ref(NVTegraH264DecodeContext *ctx, H264Picture *fr) {
+    NVTegraH264FrameData *fr_priv = fr->hwaccel_picture_private;
+
+    ctx->dpb[fr_priv->dpb_idx] = fr;
+    ctx->dpb_mask     |= 1 << fr_priv->dpb_idx;
+    ctx->pic_idx_mask |= 1 << fr_priv->pic_idx;
+}
+
+static inline int find_slot(uint32_t *mask) {
+    int slot = ff_ctz(~*mask);
     *mask |= (1 << slot);
     return slot;
 }
@@ -192,9 +193,9 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
     const PPS *pps = h->ps.pps;
     const SPS *sps = h->ps.sps;
 
-    int dpb_size, i, j, diff;
-    H264Picture *refs [16+1] = {0};
-    uint8_t dpb_to_ref[16+1] = {0};
+    H264Picture *refs[16+1] = {0};
+    NVTegraH264FrameData *fr_priv;
+    int num_refs, max, i, diff;
 
     *setup = (nvdec_h264_pic_s){
         .mbhist_buffer_size                     = ctx->mbhist_size,
@@ -259,102 +260,81 @@ static void nvtegra_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         .qpprime_y_zero_transform_bypass_flag   = sps->transform_bypass,
     };
 
-    /* Build concatenated ref list for this frame */
-    dpb_size = 0;
-    for (i = 0; i < h->short_ref_count; ++i)
-        refs[dpb_size++] = h->short_ref[i];
-
-    for (i = 0; i < 16; ++i)
-        if (h->long_ref[i])
-            refs[dpb_size++] = h->long_ref[i];
-
-    /* Remove stale references from our ref list */
-    for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
-        if (!(ctx->refs_mask & (1 << i)))
-            continue;
-
-        for (j = 0; j < dpb_size; ++j) {
-            if (av_nvtegra_frame_get_fbuf_map(refs[j]->f) == ctx->refs[i].map)
-                break;
-        }
-
-        if (j == dpb_size) {
-            ctx->pic_id_mask &= ~(1 << ctx->refs[i].pic_id);
-            ctx->pic_id_map[ctx->refs[i].pic_id] = -1;
-
-            ctx->refs_mask &= ~(1 << i);
-            ctx->refs[i].map = NULL;
-        } else {
-            dpb_to_ref[i] = j;
-        }
-    }
-
-    /* Update the ordered DPB mask */
-    for (i = 0; i < FF_ARRAY_ELEMS(ctx->ordered_dpb_map); ++i) {
-        if (!(ctx->ordered_dpb_mask & (1 << i)))
-            continue;
-        if (!ctx->refs[ctx->ordered_dpb_map[i]].map) {
-            ctx->ordered_dpb_mask &= ~(1 << i);
-            ctx->ordered_dpb_map[i] = -1;
-        }
-    }
-
-    /* Add new frames to the ordered DPB */
-    for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
-        if (!(ctx->refs_mask & (1 << i)))
-            continue;
-
-        for (j = 0; j < FF_ARRAY_ELEMS(ctx->ordered_dpb_map); ++j) {
-            if (ctx->ordered_dpb_map[j] == i)
-                break;
-        }
-
-        if (j == FF_ARRAY_ELEMS(ctx->ordered_dpb_map))
-            ctx->ordered_dpb_map[find_slot(&ctx->ordered_dpb_mask)] = i;
-    }
-
     /*
-     * Add the current frame to our ref list
-     * In the case of interlaced video, the new frame can be the same as the last
+     * Decoded frames need to be allocated two indices, respectively for colocated
+     * and decoded data (pic_idx). For simplicity the two are kept at the same value,
+     * in both this code and the official driver. These indices must remain fixed
+     * until the frame is dropped from the DPB.
+     * Furthermore, a third index (dpb_idx) must be allocated when (and if) the
+     * decoded frame is subsequently used as a reference.
+     * Since decoding a frame will initialize its colocated data, but will not
+     * insert it (yet) in the DPB array, this last index must be decoupled from
+     * the previous two. The pic_idx is allocated when decoding a frame, while
+     * dpb_idx is allocated when it is used as a reference.
      */
-    if (ctx->refs[ctx->cur_frame].map != av_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f)) {
-        /* Allocate a pic id for the current frame */
-        i = find_slot(&ctx->pic_id_mask);
 
-        /* Insert it in our ref list */
-        ctx->cur_frame = find_slot(&ctx->refs_mask);
-        ctx->pic_id_map[i] = ctx->cur_frame;
-        ctx->refs[ctx->cur_frame] = (struct NVTegraH264RefFrame){
-            .map        = av_nvtegra_frame_get_fbuf_map(h->cur_pic_ptr->f),
-            .chroma_off = h->cur_pic_ptr->f->data[1] - h->cur_pic_ptr->f->data[0],
-            .frame_num  = h->cur_pic_ptr->frame_num,
-            .pic_id     = i,
+    /* Build concatenated list of references */
+    num_refs = 0, max = FFMIN(h->short_ref_count, FF_ARRAY_ELEMS(refs) - num_refs);
+    for (i = 0; i < max; ++i)
+        refs[num_refs++] = h->short_ref[i];
+
+    max = FFMIN(16, FF_ARRAY_ELEMS(refs) - num_refs);
+    for (i = 0; i < max; ++i)
+        if (h->long_ref[i])
+            refs[num_refs++] = h->short_ref[i];
+
+    /* Add all frames with an already allocated DPB index to our ref list */
+    for (i = 0; i < num_refs; ++i) {
+        NVTegraH264FrameData *fr_priv = refs[i]->hwaccel_picture_private;
+        if (!fr_priv->dpb_initialized)
+            continue;
+
+        register_ref(ctx, refs[i]);
+    }
+
+    /* Allocate a DPB index for new frames and add them to our ref list */
+    for (i = 0; i < num_refs; ++i) {
+        NVTegraH264FrameData *fr_priv = refs[i]->hwaccel_picture_private;
+        if (fr_priv->dpb_initialized || !fr_priv->pic_initialized)
+            continue;
+
+        fr_priv->dpb_idx         = find_slot(&ctx->dpb_mask);
+        fr_priv->dpb_initialized = true;
+
+        register_ref(ctx, refs[i]);
+    }
+
+    /* Allocate a picture idx for the current frame */
+    fr_priv = h->cur_pic_ptr->hwaccel_picture_private;
+    if (!fr_priv->pic_initialized) {
+        *fr_priv = (NVTegraH264FrameData){
+            .pic_idx         = find_slot(&ctx->pic_idx_mask),
+            .pic_initialized = true,
         };
     }
 
-    setup->CurrPicIdx = setup->CurrColIdx = ctx->refs[ctx->cur_frame].pic_id;
+    setup->CurrPicIdx = setup->CurrColIdx = fr_priv->pic_idx;
 
-    /* Find the temporally closest frame to be used as a scratch ref, or use the current one */
-    diff = INT_MAX;
-    ctx->scratch_ref = ctx->cur_frame;
-    for (i = 0; i < FF_ARRAY_ELEMS(ctx->ordered_dpb_map); ++i) {
-        j = ctx->ordered_dpb_map[i];
-        if ((ctx->ordered_dpb_mask & (1 << i)) &&
-                FFABS(h->cur_pic_ptr->frame_num - refs[dpb_to_ref[j]]->frame_num) < diff)
-            ctx->scratch_ref = j;
-    }
-
-    /* Build the NVDEC DPB */
+    /* Finally, fill the NVDEC DPB */
     for (i = 0; i < FF_ARRAY_ELEMS(setup->dpb); ++i) {
-        if (ctx->ordered_dpb_mask & (1 << i)) {
-            j = ctx->ordered_dpb_map[i];
-            dpb_add(h, &setup->dpb[i], refs[dpb_to_ref[j]], ctx->refs[j].pic_id);
-        }
+        if (ctx->dpb_mask & (1 << i))
+            dpb_add(h, &setup->dpb[i], ctx->dpb[i]);
     }
 
     memcpy(setup->WeightScale,       pps->scaling_matrix4,    sizeof(setup->WeightScale));
     memcpy(setup->WeightScale8x8[0], pps->scaling_matrix8[0], sizeof(setup->WeightScale8x8[0]));
     memcpy(setup->WeightScale8x8[1], pps->scaling_matrix8[3], sizeof(setup->WeightScale8x8[1]));
+
+    /* Find the temporally closest frame to be used as a scratch ref, or use the current one */
+    diff = INT_MAX;
+    ctx->scratch_ref = h->cur_pic_ptr;
+    for (i = 0; i < FF_ARRAY_ELEMS(ctx->dpb); ++i) {
+        if (!(ctx->dpb_mask & (1 << i)))
+            continue;
+
+        if (FFABS(h->cur_pic_ptr->frame_num - ctx->dpb[i]->frame_num) < diff)
+            ctx->scratch_ref = ctx->dpb[i];
+    }
 }
 
 static int nvtegra_h264_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, H264Context *h,
@@ -364,6 +344,8 @@ static int nvtegra_h264_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, H264Context *h,
     FFNVTegraDecodeFrame *tf = fdd->hwaccel_priv;
     AVNVTegraMap  *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
 
+    H264Picture *refs[16+1];
+    NVTegraH264FrameData *fr_priv;
     int err, i;
 
     err = av_nvtegra_cmdbuf_begin(cmdbuf, HOST1X_CLASS_NVDEC);
@@ -395,21 +377,30 @@ static int nvtegra_h264_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, H264Context *h,
     AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_HISTORY_OFFSET,
                           &ctx->common_map, ctx->history_off,            NVHOST_RELOC_TYPE_DEFAULT);
 
-#define PUSH_FRAME(ref, offset) ({                                                \
-    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4, \
-                          ref.map, 0, NVHOST_RELOC_TYPE_DEFAULT);                 \
-    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4, \
-                          ref.map, ref.chroma_off, NVHOST_RELOC_TYPE_DEFAULT);    \
+    /* Build list of references sorted by picture idx */
+    for (i = 0; i < FF_ARRAY_ELEMS(refs); ++i)
+        refs[i] = ctx->scratch_ref;
+
+    fr_priv = h->cur_pic_ptr->hwaccel_picture_private;
+    refs[fr_priv->pic_idx] = h->cur_pic_ptr;
+
+    for (i = 0; i < FF_ARRAY_ELEMS(ctx->dpb); ++i) {
+        if (!(ctx->dpb_mask & (1 << i)))
+            continue;
+        fr_priv = ctx->dpb[i]->hwaccel_picture_private;
+        refs[fr_priv->pic_idx] = ctx->dpb[i];
+    }
+
+#define PUSH_FRAME(fr, offset) ({                                                           \
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,           \
+                          av_nvtegra_frame_get_fbuf_map(fr), 0, NVHOST_RELOC_TYPE_DEFAULT); \
+    AV_NVTEGRA_PUSH_RELOC(cmdbuf, NVC5B0_SET_PICTURE_CHROMA_OFFSET0 + offset * 4,           \
+                          av_nvtegra_frame_get_fbuf_map(fr), fr->data[1] - fr->data[0],     \
+                          NVHOST_RELOC_TYPE_DEFAULT);                                       \
 })
 
-    for (i = 0; i < 16 + 1; ++i) {
-        if (i == ctx->cur_frame)
-            PUSH_FRAME(ctx->refs[i], i);
-        else if (ctx->pic_id_mask & (1 << i))
-            PUSH_FRAME(ctx->refs[ctx->pic_id_map[i]], i);
-        else
-            PUSH_FRAME(ctx->refs[ctx->scratch_ref], i);
-    }
+    for (i = 0; i < FF_ARRAY_ELEMS(refs); ++i)
+        PUSH_FRAME(refs[i]->f, i);
 
     AV_NVTEGRA_PUSH_VALUE(cmdbuf, NVC5B0_EXECUTE,
                           AV_NVTEGRA_ENUM(NVC5B0_EXECUTE, AWAKEN, ENABLE));
@@ -442,6 +433,9 @@ static int nvtegra_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     tf = fdd->hwaccel_priv;
     input_map = (AVNVTegraMap *)tf->input_map_ref->data;
     mem = av_nvtegra_map_get_addr(input_map);
+
+    memset(ctx->dpb, 0, sizeof(ctx->dpb));
+    ctx->dpb_mask = ctx->pic_idx_mask = 0;
 
     nvtegra_h264_prepare_frame_setup((nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
 
@@ -490,17 +484,18 @@ static int nvtegra_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
 
 #if CONFIG_H264_NVTEGRA_HWACCEL
 const FFHWAccel ff_h264_nvtegra_hwaccel = {
-    .p.name         = "h264_nvtegra",
-    .p.type         = AVMEDIA_TYPE_VIDEO,
-    .p.id           = AV_CODEC_ID_H264,
-    .p.pix_fmt      = AV_PIX_FMT_NVTEGRA,
-    .start_frame    = &nvtegra_h264_start_frame,
-    .end_frame      = &nvtegra_h264_end_frame,
-    .decode_slice   = &nvtegra_h264_decode_slice,
-    .init           = &nvtegra_h264_decode_init,
-    .uninit         = &nvtegra_h264_decode_uninit,
-    .frame_params   = &ff_nvtegra_frame_params,
-    .priv_data_size = sizeof(NVTegraH264DecodeContext),
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name               = "h264_nvtegra",
+    .p.type               = AVMEDIA_TYPE_VIDEO,
+    .p.id                 = AV_CODEC_ID_H264,
+    .p.pix_fmt            = AV_PIX_FMT_NVTEGRA,
+    .start_frame          = &nvtegra_h264_start_frame,
+    .end_frame            = &nvtegra_h264_end_frame,
+    .decode_slice         = &nvtegra_h264_decode_slice,
+    .init                 = &nvtegra_h264_decode_init,
+    .uninit               = &nvtegra_h264_decode_uninit,
+    .frame_params         = &ff_nvtegra_frame_params,
+    .frame_priv_data_size = sizeof(NVTegraH264FrameData),
+    .priv_data_size       = sizeof(NVTegraH264DecodeContext),
+    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif
