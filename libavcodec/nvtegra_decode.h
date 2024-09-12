@@ -18,8 +18,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifndef AVCODEC_NVTEGRA_H
-#define AVCODEC_NVTEGRA_H
+#ifndef AVCODEC_NVTEGRA_DECODE_H
+#define AVCODEC_NVTEGRA_DECODE_H
 
 #include <stdbool.h>
 
@@ -91,4 +91,4 @@ int ff_nvtegra_wait_decode(void *logctx, AVFrame *frame);
 
 int ff_nvtegra_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx);
 
-#endif /* AVCODEC_NVTEGRA_H */
+#endif /* AVCODEC_NVTEGRA_DECODE_H */
