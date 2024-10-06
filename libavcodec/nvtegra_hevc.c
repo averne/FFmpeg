@@ -18,16 +18,17 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include <stdbool.h>
-
 #include "config_components.h"
+
+#include <stdbool.h>
+#include <string.h>
 
 #include "avcodec.h"
 #include "hwaccel_internal.h"
 #include "internal.h"
 #include "hwconfig.h"
-#include "hevcdec.h"
-#include "hevc_data.h"
+#include "hevc/hevcdec.h"
+#include "hevc/data.h"
 #include "decode.h"
 #include "nvtegra_decode.h"
 
@@ -142,8 +143,8 @@ fail:
 }
 
 static void nvtegra_hevc_set_scaling_list(nvdec_hevc_scaling_list_s *list, HEVCContext *s) {
-    const ScalingList *sl = s->ps.pps->scaling_list_data_present_flag ?
-                            &s->ps.pps->scaling_list : &s->ps.sps->scaling_list;
+    const ScalingList *sl = s->pps->scaling_list_data_present_flag ?
+                            &s->pps->scaling_list : &s->pps->sps->scaling_list;
 
     int i;
 
@@ -163,8 +164,8 @@ static void nvtegra_hevc_set_scaling_list(nvdec_hevc_scaling_list_s *list, HEVCC
 }
 
 static void nvtegra_hevc_set_tile_sizes(uint16_t *sizes, HEVCContext *s) {
-    const HEVCPPS *pps = s->ps.pps;
-    const HEVCSPS *sps = s->ps.sps;
+    const HEVCPPS *pps = s->pps;
+    const HEVCSPS *sps = pps->sps;
 
     int i, j, sum;
 
@@ -229,9 +230,10 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     AVNVTegraMap       *input_map = (AVNVTegraMap *)tf->input_map_ref->data;
     AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     HEVCContext                *s = avctx->priv_data;
+    HEVCLayerContext           *l = &s->layers[s->cur_layer];
     SliceHeader               *sh = &s->sh;
-    const HEVCPPS            *pps = s->ps.pps;
-    const HEVCSPS            *sps = s->ps.sps;
+    const HEVCPPS            *pps = s->pps;
+    const HEVCSPS            *sps = pps->sps;
 
     HEVCFrame *fr;
     NVTegraHEVCFrameData *fr_priv;
@@ -275,8 +277,8 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
 
         /* Divide by two if we are decoding to a 2bpp surface */
         .framestride                                 = {
-            s->frame->linesize[0] / ((output_mode == 1) ? 2 : 1),
-            s->frame->linesize[1] / ((output_mode == 1) ? 2 : 1),
+            s->cur_frame->f->linesize[0] / ((output_mode == 1) ? 2 : 1),
+            s->cur_frame->f->linesize[1] / ((output_mode == 1) ? 2 : 1),
         },
 
         .colMvBuffersize                             = ctx->colmv_size / 256,
@@ -296,17 +298,17 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
 
         .max_transform_hierarchy_depth_inter         = sps->max_transform_hierarchy_depth_inter,
         .max_transform_hierarchy_depth_intra         = sps->max_transform_hierarchy_depth_intra,
-        .scalingListEnable                           = sps->scaling_list_enable_flag,
-        .amp_enable_flag                             = sps->amp_enabled_flag,
+        .scalingListEnable                           = sps->scaling_list_enabled,
+        .amp_enable_flag                             = sps->amp_enabled,
         .sample_adaptive_offset_enabled_flag         = sps->sao_enabled,
-        .pcm_enabled_flag                            = sps->pcm_enabled_flag,
-        .pcm_sample_bit_depth_luma                   = sps->pcm_enabled_flag ? sps->pcm.bit_depth                : 0,
-        .pcm_sample_bit_depth_chroma                 = sps->pcm_enabled_flag ? sps->pcm.bit_depth_chroma         : 0,
-        .log2_min_pcm_luma_coding_block_size         = sps->pcm_enabled_flag ? sps->pcm.log2_min_pcm_cb_size     : 0,
-        .log2_max_pcm_luma_coding_block_size         = sps->pcm_enabled_flag ? sps->pcm.log2_max_pcm_cb_size     : 0,
-        .pcm_loop_filter_disabled_flag               = sps->pcm_enabled_flag ? sps->pcm.loop_filter_disable_flag : 0,
-        .sps_temporal_mvp_enabled_flag               = sps->sps_temporal_mvp_enabled_flag,
-        .strong_intra_smoothing_enabled_flag         = sps->sps_strong_intra_smoothing_enable_flag,
+        .pcm_enabled_flag                            = sps->pcm_enabled,
+        .pcm_sample_bit_depth_luma                   = sps->pcm_enabled ? sps->pcm.bit_depth            : 0,
+        .pcm_sample_bit_depth_chroma                 = sps->pcm_enabled ? sps->pcm.bit_depth_chroma     : 0,
+        .log2_min_pcm_luma_coding_block_size         = sps->pcm_enabled ? sps->pcm.log2_min_pcm_cb_size : 0,
+        .log2_max_pcm_luma_coding_block_size         = sps->pcm_enabled ? sps->pcm.log2_max_pcm_cb_size : 0,
+        .pcm_loop_filter_disabled_flag               = sps->pcm_loop_filter_disabled,
+        .sps_temporal_mvp_enabled_flag               = sps->temporal_mvp_enabled,
+        .strong_intra_smoothing_enabled_flag         = sps->strong_intra_smoothing_enabled,
 
         .dependent_slice_segments_enabled_flag       = pps->dependent_slice_segments_enabled_flag,
         .output_flag_present_flag                    = pps->output_flag_present_flag,
@@ -342,7 +344,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         .log2_parallel_merge_level                   = pps->log2_parallel_merge_level,
         .slice_segment_header_extension_present_flag = pps->slice_header_extension_present_flag,
 
-        .num_ref_frames                              = ff_hevc_frame_nb_refs(s),
+        .num_ref_frames                              = ff_hevc_frame_nb_refs(sh, pps, s->cur_layer),
 
         .IDR_picture_flag                            = IS_IDR(s),
         .RAP_picture_flag                            = IS_IRAP(s),
@@ -369,12 +371,12 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
      */
 
     /* Build ordered reflist from the DPB */
-    for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); ++i) {
-        fr      = &s->DPB[i];
+    for (i = 0; i < FF_ARRAY_ELEMS(l->DPB); ++i) {
+        fr      = &l->DPB[i];
         fr_priv = fr->hwaccel_picture_private;
 
         if ((fr->flags & (HEVC_FRAME_FLAG_LONG_REF | HEVC_FRAME_FLAG_SHORT_REF)) &&
-            (fr != s->ref) && fr_priv->initialized)
+            (fr != s->cur_frame) && fr_priv->initialized)
         {
             ctx->refs[fr_priv->dpb_idx] = fr;
             ctx->refs_mask |= 1 << fr_priv->dpb_idx;
@@ -382,10 +384,10 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     }
 
     /* Try to find a valid reference, or use the current one */
-    ctx->scratch_ref = s->ref, scratch_ref_diff_poc = 0;
+    ctx->scratch_ref = s->cur_frame, scratch_ref_diff_poc = 0;
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
         fr = ctx->refs[i];
-        if (!(ctx->refs_mask & (1 << i)) || (fr == s->ref))
+        if (!(ctx->refs_mask & (1 << i)) || (fr == s->cur_frame))
             continue;
 
         st = find_ref_rps_type(s, fr);
@@ -393,15 +395,15 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
             continue;
 
         ctx->scratch_ref     = fr;
-        scratch_ref_diff_poc = av_clip_int8(s->ref->poc - fr->poc);
+        scratch_ref_diff_poc = av_clip_int8(s->cur_frame->poc - fr->poc);
         break;
     }
 
     /* Add the current frame to our ref list */
     setup->curr_pic_idx = cur_frame = find_slot(&ctx->refs_mask);
-    ctx->refs[cur_frame] = s->ref;
+    ctx->refs[cur_frame] = s->cur_frame;
 
-    fr_priv = s->ref->hwaccel_picture_private;
+    fr_priv = s->cur_frame->hwaccel_picture_private;
     *fr_priv = (NVTegraHEVCFrameData){
         .dpb_idx     = cur_frame,
         .initialized = true,
@@ -414,7 +416,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
 
         if (ctx->refs_mask & (1 << i)) {
             fr = ctx->refs[i];
-            setup->RefDiffPicOrderCnts[i] = av_clip_int8(s->ref->poc - fr->poc);
+            setup->RefDiffPicOrderCnts[i] = av_clip_int8(s->cur_frame->poc - fr->poc);
             setup->longtermflag |= !!(fr->flags & HEVC_FRAME_FLAG_LONG_REF) << (15 - i);
         } else {
             setup->RefDiffPicOrderCnts[i] = scratch_ref_diff_poc;
@@ -459,7 +461,7 @@ static void nvtegra_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
 
     ctx->pattern_id ^= 1;
 
-    if (sps->scaling_list_enable_flag)
+    if (sps->scaling_list_enabled)
         nvtegra_hevc_set_scaling_list((nvdec_hevc_scaling_list_s *)(mem + ctx->scaling_list_off), s);
 
     tile_sizes = (uint16_t *)(mem + ctx->tile_sizes_off);
@@ -520,9 +522,9 @@ static int nvtegra_hevc_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, HEVCContext *s,
 
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->refs); ++i) {
         if (ctx->refs_mask & (1 << i))
-            PUSH_FRAME(ctx->refs[i]->frame,     i);
+            PUSH_FRAME(ctx->refs[i]->f,     i);
         else
-            PUSH_FRAME(ctx->scratch_ref->frame, i);
+            PUSH_FRAME(ctx->scratch_ref->f, i);
     }
 
     /* TODO: Dithered 8-bit post-processing, binding to DISPLAY_BUF */
@@ -539,7 +541,7 @@ static int nvtegra_hevc_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, HEVCContext *s,
 
 static int nvtegra_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     HEVCContext                *s = avctx->priv_data;
-    AVFrame                *frame = s->frame;
+    AVFrame                *frame = s->cur_frame->f;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
@@ -571,7 +573,7 @@ static int nvtegra_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
 static int nvtegra_hevc_end_frame(AVCodecContext *avctx) {
     HEVCContext                *s = avctx->priv_data;
     NVTegraHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame                *frame = s->ref->frame;
+    AVFrame                *frame = s->cur_frame->f;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFNVTegraDecodeFrame      *tf = fdd->hwaccel_priv;
 
@@ -601,7 +603,7 @@ static int nvtegra_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
                                      uint32_t buf_size)
 {
     HEVCContext                *s = avctx->priv_data;
-    AVFrame                *frame = s->ref->frame;
+    AVFrame                *frame = s->cur_frame->f;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFNVTegraDecodeFrame      *tf = fdd->hwaccel_priv;
     AVNVTegraMap       *input_map = (AVNVTegraMap *)tf->input_map_ref->data;

@@ -20,6 +20,8 @@
 
 #include "config_components.h"
 
+#include <stdbool.h>
+
 #include "avcodec.h"
 #include "hwaccel_internal.h"
 #include "internal.h"
@@ -152,8 +154,8 @@ static void nvtegra_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecC
         .height                       = FFALIGN(s->height, MB_SIZE),
 
         .FrameStride                  = {
-            s->current_picture.f->linesize[0],
-            s->current_picture.f->linesize[1],
+            s->cur_pic.ptr->f->linesize[0],
+            s->cur_pic.ptr->f->linesize[1],
         },
 
         .luma_top_offset              = 0,
@@ -252,7 +254,7 @@ static int nvtegra_mpeg4_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, MpegEncContext 
 static int nvtegra_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     Mpeg4DecContext             *m = avctx->priv_data;
     MpegEncContext              *s = &m->m;
-    AVFrame                 *frame = s->current_picture.f;
+    AVFrame                 *frame = s->cur_pic.ptr->f;
     FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraMPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
@@ -274,8 +276,8 @@ static int nvtegra_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
 
     nvtegra_mpeg4_prepare_frame_setup((nvdec_mpeg4_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
 
-    ctx->prev_frame = (s->pict_type != AV_PICTURE_TYPE_I) ? s->last_picture.f : frame;
-    ctx->next_frame = (s->pict_type == AV_PICTURE_TYPE_B) ? s->next_picture.f : frame;
+    ctx->prev_frame = (s->pict_type != AV_PICTURE_TYPE_I && s->last_pic.ptr) ? s->last_pic.ptr->f : frame;
+    ctx->next_frame = (s->pict_type == AV_PICTURE_TYPE_B && s->next_pic.ptr) ? s->next_pic.ptr->f : frame;
 
     return 0;
 }
@@ -284,7 +286,7 @@ static int nvtegra_mpeg4_end_frame(AVCodecContext *avctx) {
     Mpeg4DecContext             *m = avctx->priv_data;
     MpegEncContext              *s = &m->m;
     NVTegraMPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame                 *frame = s->current_picture.f;
+    AVFrame                 *frame = s->cur_pic.ptr->f;
     FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFNVTegraDecodeFrame       *tf = fdd->hwaccel_priv;
 
@@ -317,7 +319,7 @@ static int nvtegra_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
                                   uint32_t buf_size)
 {
     Mpeg4DecContext *m = avctx->priv_data;
-    AVFrame     *frame = m->m.current_picture.f;
+    AVFrame     *frame = m->m.cur_pic.ptr->f;
 
     /* Rewind the bitstream looking for the VOP start marker */
     while (*(uint32_t *)buf != AV_BE2NE32C(VOP_STARTCODE))

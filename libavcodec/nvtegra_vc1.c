@@ -18,9 +18,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include <stdbool.h>
-
 #include "config_components.h"
+
+#include <stdbool.h>
 
 #include "avcodec.h"
 #include "hwaccel_internal.h"
@@ -146,7 +146,7 @@ static void nvtegra_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
 {
     VC1Context     *v = avctx->priv_data;
     MpegEncContext *s = &v->s;
-    AVFrame    *frame = s->current_picture_ptr->f;
+    AVFrame    *frame = s->cur_pic.ptr->f;
 
     /*
      * Notes:
@@ -318,7 +318,7 @@ static int nvtegra_vc1_prepare_cmdbuf(AVNVTegraCmdbuf *cmdbuf, VC1Context *v, NV
 static int nvtegra_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     VC1Context                *v = avctx->priv_data;
     MpegEncContext            *s = &v->s;
-    AVFrame               *frame = s->current_picture.f;
+    AVFrame               *frame = s->cur_pic.ptr->f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     NVTegraVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
@@ -342,8 +342,8 @@ static int nvtegra_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
 
     nvtegra_vc1_prepare_frame_setup((nvdec_vc1_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
 
-    ctx->prev_frame = ff_nvtegra_safe_get_ref(s->last_picture.f, frame);
-    ctx->next_frame = ff_nvtegra_safe_get_ref(s->next_picture.f, frame);
+    ctx->prev_frame = ff_nvtegra_safe_get_ref(s->last_pic.ptr ? s->last_pic.ptr->f : frame, frame);
+    ctx->next_frame = ff_nvtegra_safe_get_ref(s->next_pic.ptr ? s->next_pic.ptr->f : frame, frame);
 
     return 0;
 }
@@ -351,7 +351,7 @@ static int nvtegra_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
 static int nvtegra_vc1_end_frame(AVCodecContext *avctx) {
     VC1Context                *v = avctx->priv_data;
     NVTegraVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame               *frame = v->s.current_picture.f;
+    AVFrame               *frame = v->s.cur_pic.ptr->f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFNVTegraDecodeFrame     *tf = fdd->hwaccel_priv;
 
@@ -385,7 +385,7 @@ static int nvtegra_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
 {
     VC1Context                *v = avctx->priv_data;
     NVTegraVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame               *frame = v->s.current_picture.f;
+    AVFrame               *frame = v->s.cur_pic.ptr->f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFNVTegraDecodeFrame     *tf = fdd->hwaccel_priv;
     AVNVTegraMap      *input_map = (AVNVTegraMap *)tf->input_map_ref->data;

@@ -20,6 +20,8 @@
 
 #include "config_components.h"
 
+#include <stdbool.h>
+
 #include "avcodec.h"
 #include "hwaccel_internal.h"
 #include "internal.h"
