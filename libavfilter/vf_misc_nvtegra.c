@@ -20,6 +20,7 @@
 
 #include "config_components.h"
 
+#include <stdbool.h>
 #include <string.h>
 
 #include "libavutil/opt.h"
@@ -28,7 +29,6 @@
 
 #include "avfilter.h"
 #include "video.h"
-#include "internal.h"
 
 #include "nvtegra_vpp.h"
 

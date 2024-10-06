@@ -28,7 +28,6 @@
 
 #include "avfilter.h"
 #include "video.h"
-#include "internal.h"
 
 #include "nvtegra_vpp.h"
 

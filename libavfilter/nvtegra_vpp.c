@@ -20,6 +20,8 @@
 
 #include "libavutil/pixdesc.h"
 
+#include "filters.h"
+
 #include "nvtegra_vpp.h"
 
 int ff_nvtegra_vpp_ctx_init(AVFilterContext *avctx) {
@@ -45,6 +47,7 @@ void ff_nvtegra_vpp_ctx_uninit(AVFilterContext *avctx) {
 }
 
 int ff_nvtegra_vpp_config_input(AVFilterLink *inlink) {
+    FilterLink            *l = ff_filter_link(inlink);
     AVFilterContext   *avctx = inlink->dst;
     FFNVTegraVppContext *ctx = avctx->priv;
 
@@ -53,12 +56,12 @@ int ff_nvtegra_vpp_config_input(AVFilterLink *inlink) {
     const AVPixFmtDescriptor *desc;
     int i, err;
 
-    if (!inlink->hw_frames_ctx) {
+    if (!l->hw_frames_ctx) {
         av_log(avctx, AV_LOG_ERROR, "No hardware frame context provided on input\n");
         return AVERROR(EINVAL);
     }
 
-    input_frames_ctx = (AVHWFramesContext *)inlink->hw_frames_ctx->data;
+    input_frames_ctx = (AVHWFramesContext *)l->hw_frames_ctx->data;
     if (input_frames_ctx->format != AV_PIX_FMT_NVTEGRA) {
         err = AVERROR(EINVAL);
         goto fail;
@@ -102,6 +105,8 @@ fail:
 
 int ff_nvtegra_vpp_config_output(AVFilterLink *outlink) {
     AVFilterLink     *inlink = outlink->src->inputs[0];
+    FilterLink          *inl = ff_filter_link(inlink);
+    FilterLink         *outl = ff_filter_link(outlink);
     AVFilterContext   *avctx = outlink->src;
     FFNVTegraVppContext *ctx = avctx->priv;
 
@@ -109,9 +114,9 @@ int ff_nvtegra_vpp_config_output(AVFilterLink *outlink) {
     AVHWFramesContext *input_hwframes_ctx, *output_hwframes_ctx;
     int err;
 
-    av_buffer_unref(&outlink->hw_frames_ctx);
+    av_buffer_unref(&outl->hw_frames_ctx);
 
-    input_hwframes_ctx = (AVHWFramesContext *)inlink->hw_frames_ctx->data;
+    input_hwframes_ctx = (AVHWFramesContext *)inl->hw_frames_ctx->data;
 
     outlink->w = ctx->output_width;
     outlink->h = ctx->output_height;
@@ -121,26 +126,26 @@ int ff_nvtegra_vpp_config_output(AVFilterLink *outlink) {
             (input_hwframes_ctx->width  == ctx->output_width) &&
             (input_hwframes_ctx->height == ctx->output_height))
     {
-        outlink->hw_frames_ctx = av_buffer_ref(inlink->hw_frames_ctx);
-        if (!outlink->hw_frames_ctx)
+        outl->hw_frames_ctx = av_buffer_ref(inl->hw_frames_ctx);
+        if (!outl->hw_frames_ctx)
             return AVERROR(ENOMEM);
     } else {
         device_ref = avctx->hw_device_ctx ?: input_hwframes_ctx->device_ref;
 
-        outlink->hw_frames_ctx = av_hwframe_ctx_alloc(device_ref);
-        if (!outlink->hw_frames_ctx)
+        outl->hw_frames_ctx = av_hwframe_ctx_alloc(device_ref);
+        if (!outl->hw_frames_ctx)
             return AVERROR(ENOMEM);
 
-        output_hwframes_ctx = (AVHWFramesContext *)outlink->hw_frames_ctx->data;
+        output_hwframes_ctx = (AVHWFramesContext *)outl->hw_frames_ctx->data;
 
         output_hwframes_ctx->format    = AV_PIX_FMT_NVTEGRA;
         output_hwframes_ctx->sw_format = ctx->output_format;
         output_hwframes_ctx->width     = outlink->w;
         output_hwframes_ctx->height    = outlink->h;
 
-        err = av_hwframe_ctx_init(outlink->hw_frames_ctx);
+        err = av_hwframe_ctx_init(outl->hw_frames_ctx);
         if (err < 0) {
-            av_buffer_unref(&outlink->hw_frames_ctx);
+            av_buffer_unref(&outl->hw_frames_ctx);
             return err;
         }
     }
