@@ -167,6 +167,7 @@ static int update_size(AVCodecContext *avctx, int w, int h)
 #define HWACCEL_MAX (CONFIG_VP9_DXVA2_HWACCEL + \
                      CONFIG_VP9_D3D11VA_HWACCEL * 2 + \
                      CONFIG_VP9_D3D12VA_HWACCEL + \
+                     CONFIG_VP9_ENVIDEO_HWACCEL + \
                      CONFIG_VP9_NVDEC_HWACCEL + \
                      CONFIG_VP9_VAAPI_HWACCEL + \
                      CONFIG_VP9_VDPAU_HWACCEL + \
@@ -188,6 +189,9 @@ static int update_size(AVCodecContext *avctx, int w, int h)
 
         switch (s->pix_fmt) {
         case AV_PIX_FMT_YUV420P:
+#if CONFIG_VP9_ENVIDEO_HWACCEL
+            *fmtp++ = AV_PIX_FMT_ENVIDEO;
+#endif
         case AV_PIX_FMT_YUV420P10:
 #if CONFIG_VP9_DXVA2_HWACCEL
             *fmtp++ = AV_PIX_FMT_DXVA2_VLD;
@@ -1947,6 +1951,9 @@ const FFCodec ff_vp9_decoder = {
 #endif
 #if CONFIG_VP9_D3D12VA_HWACCEL
                                HWACCEL_D3D12VA(vp9),
+#endif
+#if CONFIG_VP9_ENVIDEO_HWACCEL
+                               HWACCEL_ENVIDEO(vp9),
 #endif
 #if CONFIG_VP9_NVDEC_HWACCEL
                                HWACCEL_NVDEC(vp9),
