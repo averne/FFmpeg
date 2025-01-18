@@ -789,6 +789,9 @@ static av_cold int mpeg_decode_init(AVCodecContext *avctx)
 }
 
 static const enum AVPixelFormat mpeg1_hwaccel_pixfmt_list_420[] = {
+#if CONFIG_MPEG1_ENVIDEO_HWACCEL
+    AV_PIX_FMT_ENVIDEO,
+#endif
 #if CONFIG_MPEG1_NVDEC_HWACCEL
     AV_PIX_FMT_CUDA,
 #endif
@@ -821,6 +824,9 @@ static const enum AVPixelFormat mpeg2_hwaccel_pixfmt_list_420[] = {
 #endif
 #if CONFIG_MPEG2_VIDEOTOOLBOX_HWACCEL
     AV_PIX_FMT_VIDEOTOOLBOX,
+#endif
+#if CONFIG_MPEG2_ENVIDEO_HWACCEL
+    AV_PIX_FMT_ENVIDEO,
 #endif
     AV_PIX_FMT_YUV420P,
     AV_PIX_FMT_NONE
@@ -2654,6 +2660,9 @@ const FFCodec ff_mpeg1video_decoder = {
     .flush                 = flush,
     .p.max_lowres          = 3,
     .hw_configs            = (const AVCodecHWConfigInternal *const []) {
+#if CONFIG_MPEG1_ENVIDEO_HWACCEL
+                               HWACCEL_ENVIDEO(mpeg1),
+#endif
 #if CONFIG_MPEG1_NVDEC_HWACCEL
                                HWACCEL_NVDEC(mpeg1),
 #endif
@@ -2724,6 +2733,9 @@ const FFCodec ff_mpeg2video_decoder = {
 #endif
 #if CONFIG_MPEG2_D3D12VA_HWACCEL
                         HWACCEL_D3D12VA(mpeg2),
+#endif
+#if CONFIG_MPEG2_ENVIDEO_HWACCEL
+                        HWACCEL_ENVIDEO(mpeg1),
 #endif
 #if CONFIG_MPEG2_NVDEC_HWACCEL
                         HWACCEL_NVDEC(mpeg2),
