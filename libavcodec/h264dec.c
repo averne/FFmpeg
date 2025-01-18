@@ -1130,6 +1130,9 @@ const FFCodec ff_h264_decoder = {
 #if CONFIG_H264_D3D12VA_HWACCEL
                                HWACCEL_D3D12VA(h264),
 #endif
+#if CONFIG_H264_ENVIDEO_HWACCEL
+                               HWACCEL_ENVIDEO(h264),
+#endif
 #if CONFIG_H264_NVDEC_HWACCEL
                                HWACCEL_NVDEC(h264),
 #endif
