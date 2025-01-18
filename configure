@@ -373,6 +373,7 @@ External library support:
   --disable-videotoolbox   disable VideoToolbox code [autodetect]
   --disable-vulkan         disable Vulkan code [autodetect]
   --enable-vulkan-static   statically link to libvulkan [no]
+  --enable-envideo         enable envideo code [no]
 
 Toolchain options:
   --arch=ARCH              select architecture [$arch]
@@ -2157,6 +2158,7 @@ HWACCEL_LIBRARY_NONFREE_LIST="
 
 HWACCEL_LIBRARY_LIST="
     $HWACCEL_LIBRARY_NONFREE_LIST
+    envideo
     libmfx
     libvpl
     mmal
@@ -7226,6 +7228,7 @@ enabled chromaprint       && { check_pkg_config chromaprint libchromaprint "chro
                                require chromaprint chromaprint.h chromaprint_get_version -lchromaprint; }
 enabled decklink          && { require_headers DeckLinkAPI.h &&
                                { test_cpp_condition DeckLinkAPIVersion.h "BLACKMAGIC_DECKLINK_API_VERSION >= 0x0a0b0000" || die "ERROR: Decklink API version must be >= 10.11"; } }
+enabled envideo           && require_pkg_config envideo "envideo >= 1.0.0" envideo/envideo.h envideo_device_create
 enabled frei0r            && require_headers "frei0r.h"
 enabled gmp               && require gmp gmp.h mpz_export -lgmp
 enabled gnutls            && require_pkg_config gnutls gnutls gnutls/gnutls.h gnutls_global_init

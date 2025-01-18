@@ -499,6 +499,13 @@ enum AVPixelFormat {
 
     AV_PIX_FMT_OHCODEC, /// hardware decoding through openharmony
 
+    /**
+     * Envideo hardware surfaces
+     *
+     * data[0] points to an AVEnvideoFrame
+     */
+    AV_PIX_FMT_ENVIDEO,
+
     AV_PIX_FMT_NB         ///< number of pixel formats, DO NOT USE THIS if you want to link with shared libav* because the number of formats might differ between versions
 };
 

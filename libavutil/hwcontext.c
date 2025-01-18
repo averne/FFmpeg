@@ -72,6 +72,9 @@ static const HWContextType * const hw_table[] = {
 #if CONFIG_OHCODEC
     &ff_hwcontext_type_oh,
 #endif
+#if CONFIG_ENVIDEO
+    &ff_hwcontext_type_envideo,
+#endif
     NULL,
 };
 
@@ -90,6 +93,7 @@ static const char *const hw_type_names[] = {
     [AV_HWDEVICE_TYPE_VULKAN] = "vulkan",
     [AV_HWDEVICE_TYPE_AMF] = "amf",
     [AV_HWDEVICE_TYPE_OHCODEC] = "ohcodec",
+    [AV_HWDEVICE_TYPE_ENVIDEO] = "envideo",
 };
 
 typedef struct FFHWDeviceContext {
