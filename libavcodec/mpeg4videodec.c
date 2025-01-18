@@ -4098,6 +4098,9 @@ const FFCodec ff_mpeg4_decoder = {
     UPDATE_THREAD_CONTEXT_FOR_USER(mpeg4_update_thread_context_for_user),
     .p.priv_class = &mpeg4_class,
     .hw_configs            = (const AVCodecHWConfigInternal *const []) {
+#if CONFIG_MPEG4_ENVIDEO_HWACCEL
+                               HWACCEL_ENVIDEO(mpeg4),
+#endif
 #if CONFIG_MPEG4_NVDEC_HWACCEL
                                HWACCEL_NVDEC(mpeg4),
 #endif
