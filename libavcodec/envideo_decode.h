@@ -27,7 +27,9 @@
 
 #include <envideo/classes/nvmisc.h>
 #include <envideo/classes/clc9b0.h>
+#include <envideo/classes/cle7d0.h>
 #include <envideo/classes/nvdec_drv.h>
+#include <envideo/classes/nvjpg_drv.h>
 
 #include "avcodec.h"
 #include "libavutil/hwcontext_envideo.h"

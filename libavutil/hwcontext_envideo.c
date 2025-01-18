@@ -340,7 +340,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
             .width      = AV_CEIL_RSHIFT(src->width,  i ? desc->log2_chroma_w : 0) * plane_bpp[i],
             .height     = AV_CEIL_RSHIFT(src->height, i ? desc->log2_chroma_h : 0),
             .stride     = src->linesize[i],
-            .tiled      = from,
+            .tiled      = from && !enframe->is_pitch,
             .gob_height = from ? 2 : 0, /* Engine code assumes GOB_HEIGHT = 2 */
         };
 
@@ -350,7 +350,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
             .width      = AV_CEIL_RSHIFT(dst->width,  i ? desc->log2_chroma_w : 0) * plane_bpp[i],
             .height     = AV_CEIL_RSHIFT(dst->height, i ? desc->log2_chroma_h : 0),
             .stride     = dst->linesize[i],
-            .tiled      = !from,
+            .tiled      = !from && !enframe->is_pitch,
             .gob_height = !from ? 2 : 0, /* Engine code assumes GOB_HEIGHT = 2 */
         };
 

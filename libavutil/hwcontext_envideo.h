@@ -42,6 +42,12 @@ typedef struct AVEnvideoFrame {
      * The fence associated with the last operation on the frame
      */
     EnvideoFence fence;
+
+    /**
+     * Whether the frame data layout is pitch linear (row-based)
+     * or tiled (hardware-specific)
+     */
+    bool is_pitch;
 } AVEnvideoFrame;
 
 /**

@@ -747,6 +747,9 @@ int ff_mjpeg_decode_sof(MJpegDecodeContext *s)
             s->avctx->pix_fmt = s->hwaccel_pix_fmt;
         } else {
             enum AVPixelFormat pix_fmts[] = {
+#if CONFIG_MJPEG_ENVIDEO_HWACCEL
+                AV_PIX_FMT_ENVIDEO,
+#endif
 #if CONFIG_MJPEG_NVDEC_HWACCEL
                 AV_PIX_FMT_CUDA,
 #endif
@@ -2986,6 +2989,9 @@ const FFCodec ff_mjpeg_decoder = {
                       FF_CODEC_CAP_SKIP_FRAME_FILL_PARAM |
                       FF_CODEC_CAP_ICC_PROFILES,
     .hw_configs     = (const AVCodecHWConfigInternal *const []) {
+#if CONFIG_MJPEG_ENVIDEO_HWACCEL
+                        HWACCEL_ENVIDEO(mjpeg),
+#endif
 #if CONFIG_MJPEG_NVDEC_HWACCEL
                         HWACCEL_NVDEC(mjpeg),
 #endif
