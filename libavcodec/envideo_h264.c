@@ -135,6 +135,10 @@ static int envideo_h264_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    if (err < 0)
+        goto fail;
+
     ctx->mbhist_size  = mbhist_size;
     ctx->history_size = history_size;
 

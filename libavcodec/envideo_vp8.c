@@ -136,6 +136,10 @@ static int envideo_vp8_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    if (err < 0)
+        goto fail;
+
     envideo_vp8_init_probs((uint8_t *)envideo_map_get_cpu_addr(ctx->common_map) + ctx->prob_data_off);
 
     return 0;

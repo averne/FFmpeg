@@ -118,6 +118,10 @@ static int envideo_mpeg4_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    if (err < 0)
+        goto fail;
+
     ctx->history_size = history_size;
     ctx->scratch_size = scratch_size;
 

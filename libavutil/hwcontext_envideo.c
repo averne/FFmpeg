@@ -101,7 +101,6 @@ static int envideo_dev_create(AVHWDeviceContext *ctx, const char *device,
     return envideo_device_create(&hwctx->device);
 }
 
-
 static int envideo_frames_get_constraints(AVHWDeviceContext *ctx, const void *hwconfig,
                                           AVHWFramesConstraints *constraints)
 {

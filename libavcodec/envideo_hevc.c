@@ -130,6 +130,10 @@ static int envideo_hevc_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    if (err < 0)
+        goto fail;
+
     ctx->colmv_size = aligned_width * aligned_height / 16;
     ctx->sao_offset =  FILTER_SIZE             * aligned_height;
     ctx->bsd_offset = (FILTER_SIZE + SAO_SIZE) * aligned_height;

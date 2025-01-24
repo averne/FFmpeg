@@ -138,6 +138,10 @@ static int envideo_vp9_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    if (err < 0)
+        goto fail;
+
     mem = envideo_map_get_cpu_addr(ctx->common_map);
 
     memset(mem + ctx->segment_rw1_off, 0, segment_rw_size);

@@ -54,6 +54,10 @@ static AVBufferRef *envideo_input_map_alloc(void *opaque, size_t size) {
     if (err < 0)
         return NULL;
 
+    err = envideo_map_pin(map, ctx->channel);
+    if (err < 0)
+        return NULL;
+
     buffer = av_buffer_create((uint8_t *)map, sizeof(map), envideo_input_map_free, ctx, 0);
     if (!buffer)
         goto fail;
@@ -202,10 +206,10 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
 
     if (fdd->hwaccel_priv) {
         /**
-        * For interlaced video, both fields use the same fdd,
-        * however by proceeding we might overwrite the input buffer
-        * during the decoding, so wait for the previous operation to complete.
-        */
+         * For interlaced video, both fields use the same fdd,
+         * however by proceeding we might overwrite the input buffer
+         * during the decoding, so wait for the previous operation to complete.
+         */
        err = ff_envideo_wait_decode(avctx, frame);
         if (err < 0)
             return err;
@@ -235,6 +239,10 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
         return err;
 
     err = envideo_cmdbuf_clear(ctx->cmdbuf);
+    if (err < 0)
+        return err;
+
+    err = envideo_map_pin(av_envideo_frame_get_fbuf_map(frame), ctx->channel);
     if (err < 0)
         return err;
 

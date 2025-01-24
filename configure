@@ -6315,6 +6315,10 @@ case $target_os in
         ;;
     minix)
         ;;
+    horizon)
+        enable section_data_rel_ro
+        add_extralibs -lnx
+        ;;
     none)
         ;;
     *)
@@ -8223,6 +8227,10 @@ case $target_os in
     if test_cpp_condition sys/version.h "defined(__DJGPP__) && __DJGPP__ == 2 && __DJGPP_MINOR__ == 5"; then
         disable memalign
     fi
+    ;;
+horizon)
+    disable sysctl
+    disable sysctlbyname
     ;;
 esac
 

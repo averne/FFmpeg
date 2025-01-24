@@ -128,6 +128,10 @@ static int envideo_vc1_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
+    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    if (err < 0)
+        goto fail;
+
     mem = envideo_map_get_cpu_addr(ctx->common_map);
 
     memset(mem + ctx->coloc_off,   0, coloc_size);
@@ -290,7 +294,7 @@ static int envideo_vc1_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VC1Context *v, Envi
     PUSH_FRAME(next_frame, 2);
 
     /**
-     * TODO: Bind a surface to the postproc output if we need range remapping
+      * TODO: Bind a surface to the postproc output if we need range remapping
     if (((v->profile != PROFILE_ADVANCED) && ((v->rangered != 0) || (v->rangeredfrm != 0))) ||
             ((v->range_mapy_flag != 0) || (v->range_mapuv_flag != 0))) {
         FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DISPLAY_BUF_LUMA_OFFSET,
@@ -298,7 +302,7 @@ static int envideo_vc1_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VC1Context *v, Envi
         FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DISPLAY_BUF_CHROMA_OFFSET,
                               &output.chroma, 0, NVHOST_RELOC_TYPE_DEFAULT);
     }
-     */
+      */
 
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVC9B0_EXECUTE,
                           DRF_DEF(C9B0, _EXECUTE, _AWAKEN, _ENABLE));
