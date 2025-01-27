@@ -106,6 +106,10 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
     if (err < 0)
         goto fail;
 
+    err = envideo_dfs_initialize(ctx->channel, av_q2d(avctx->framerate));
+    if (err < 0)
+        goto fail;
+
     err = envideo_cmdbuf_create(ctx->channel, &ctx->cmdbuf);
     if (err < 0)
         goto fail;
@@ -142,6 +146,8 @@ int ff_envideo_decode_uninit(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx)
     av_buffer_unref(&ctx->hw_device_ref);
 
     envideo_cmdbuf_destroy(ctx->cmdbuf);
+
+    envideo_dfs_finalize(ctx->channel);
 
     envideo_channel_destroy(ctx->channel);
 
@@ -184,7 +190,13 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
     AVHWDeviceContext   *hw_device_ctx = (AVHWDeviceContext *)ctx->hw_device_ref->data;
     AVEnvideoDeviceContext *device_ctx = hw_device_ctx->hwctx;
 
+    FFEnvideoOperation   *op = NULL;
     FFEnvideoDecodeFrame *tf = NULL;
+    nvdec_status_s   *nvdec_status;
+    nvjpg_dec_status *nvjpg_status;
+    uint32_t decode_cycles;
+    EnvideoMap *map;
+    uint8_t *mem;
     bool is_done;
     int i, err;
 
@@ -194,15 +206,54 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
 
     ctx->bitstream_len = ctx->num_slices = 0;
 
-    /* Free up input buffers from the pool if the associated job is completed */
+    /**
+     * Free up input buffers from the pool if the associated job is completed.
+     * Simultaneously, check for the statuses of the decoding operations,
+     * and update the frequency scaling state.
+     */
     for (i = 0; i < ctx->num_operations; ++i) {
-        err = envideo_fence_poll(device_ctx->device, ctx->operations[i].fence, &is_done);
-        if (err < 0)
+        op = &ctx->operations[i];
+        if (!op->input_map_ref)
             continue;
 
-        if (is_done)
-            av_buffer_unref(&ctx->operations[i].input_map_ref);
+        err = envideo_fence_poll(device_ctx->device, op->fence, &is_done);
+        if (err < 0 || !is_done)
+            continue;
+
+        map = (EnvideoMap *)op->input_map_ref->data;
+        mem = envideo_map_get_cpu_addr(map);
+
+        if (!ctx->is_nvjpg) {
+            nvdec_status = (nvdec_status_s *)(mem + ctx->status_off);
+            if (nvdec_status->error_status != 0 || nvdec_status->mbs_in_error != 0)
+                err = AVERROR_UNKNOWN;
+
+            decode_cycles = nvdec_status->cycle_count * 16;
+        } else {
+            nvjpg_status = (nvjpg_dec_status *)(mem + ctx->status_off);
+            if (nvjpg_status->error_status != 0 || nvjpg_status->bytes_offset == 0)
+                err = AVERROR_UNKNOWN;
+
+            decode_cycles = nvjpg_status->cycle_count;
+        }
+
+        av_buffer_unref(&op->input_map_ref);
+
+        if (err < 0)
+            break;
+
+        err = envideo_dfs_update(ctx->channel, op->bitstream_len, decode_cycles);
+        if (err < 0)
+            break;
     }
+
+    if (err < 0)
+        return err;
+
+    /* Perform frequency scaling */
+    err = envideo_dfs_commit(ctx->channel);
+    if (err < 0)
+        return err;
 
     if (fdd->hwaccel_priv) {
         /**
@@ -335,6 +386,7 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeC
     EnvideoMap       *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
     AVEnvideoFrame     *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
 
+    FFEnvideoOperation *op = NULL;
     uint8_t *mem;
     int i, err;
 
@@ -361,17 +413,20 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeC
         ctx->operations[ctx->num_operations++] = (FFEnvideoOperation){0};
     }
 
+    op = &ctx->operations[i];
+
     err = envideo_channel_submit(ctx->channel, ctx->cmdbuf, &tf->operation.fence);
     if (err < 0)
         return err;
 
     tf->in_flight = true;
 
-    err = av_buffer_replace(&ctx->operations[i].input_map_ref, tf->operation.input_map_ref);
+    err = av_buffer_replace(&op->input_map_ref, tf->operation.input_map_ref);
     if (err < 0)
         return err;
 
-    evframe->fence = ctx->operations[i].fence = tf->operation.fence;
+    op->fence = evframe->fence = tf->operation.fence;
+    op->bitstream_len = ctx->bitstream_len;
 
     ctx->frame_idx++;
     ctx->new_input_buffer = false;

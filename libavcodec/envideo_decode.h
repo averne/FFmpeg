@@ -39,6 +39,7 @@ typedef struct FFEnvideoDecodeContext FFEnvideoDecodeContext;
 typedef struct FFEnvideoOperation {
     AVBufferRef *input_map_ref;
     EnvideoFence fence;
+    uint32_t bitstream_len;
 } FFEnvideoOperation;
 
 typedef struct FFEnvideoDecodeFrame {
