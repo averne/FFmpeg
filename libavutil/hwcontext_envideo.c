@@ -126,10 +126,15 @@ static int envideo_frames_get_constraints(AVHWDeviceContext *ctx, const void *hw
 }
 
 static void envideo_frame_free(void *opaque, uint8_t *data) {
-    AVEnvideoFrame *frame = (AVEnvideoFrame *)data;
+    AVHWFramesContext        *ctx = opaque;
+    EnvideoDevicePriv       *priv = ctx->device_ctx->hwctx;
+    AVEnvideoDeviceContext *hwctx = &priv->p;
+    AVEnvideoFrame         *frame = (AVEnvideoFrame *)data;
 
     if (!frame)
         return;
+
+    envideo_fence_wait(hwctx->device, frame->fence, UINT64_MAX);
 
     envideo_map_destroy(frame->map);
 
