@@ -37,38 +37,33 @@
 typedef struct FFEnvideoDecodeContext FFEnvideoDecodeContext;
 
 typedef struct FFEnvideoOperation {
-    AVBufferRef *input_map_ref;
+    AVBufferRef *job_ref;
     EnvideoFence fence;
+    uint32_t num_slices;
     uint32_t bitstream_len;
 } FFEnvideoOperation;
 
 typedef struct FFEnvideoDecodeFrame {
     FFEnvideoDecodeContext *ctx;
     FFEnvideoOperation operation;
-    bool in_flight;
+    bool in_flight, new_input_buffer;
 } FFEnvideoDecodeFrame;
 
 typedef struct FFEnvideoDecodeContext {
     uint64_t frame_idx;
 
     AVBufferRef *hw_device_ref;
-    AVBufferPool *decoder_pool;
+    AVEnvideoJobPool pool;
     FFEnvideoOperation *operations;
     size_t num_operations;
 
     bool is_nvjpg;
     EnvideoChannel *channel;
-    EnvideoCmdbuf  *cmdbuf;
 
     uint32_t pic_setup_off, status_off, cmdbuf_off,
              bitstream_off, slice_offsets_off;
     uint32_t input_map_size;
     uint32_t max_cmdbuf_size, max_bitstream_size, max_num_slices;
-
-    uint32_t num_slices;
-    uint32_t bitstream_len;
-
-    bool new_input_buffer;
 } FFEnvideoDecodeContext;
 
 #define FF_ENVIDEO_PUSH_VALUE(cmdbuf, off, val) ({                      \

@@ -33,8 +33,8 @@ typedef struct EnvideoDevicePriv {
     AVEnvideoDeviceContext p;
 
     EnvideoChannel *copy_channel;
-    EnvideoMap     *copy_cmdbuf_map;
-    EnvideoCmdbuf  *copy_cmdbuf;
+
+    AVEnvideoJobPool copy_pool;
 } EnvideoDevicePriv;
 
 static const enum AVPixelFormat supported_sw_formats[] = {
@@ -50,8 +50,7 @@ static void envideo_dev_uninit(AVHWDeviceContext *ctx) {
 
     av_log(ctx, AV_LOG_DEBUG, "Deinitializing envideo device\n");
 
-    envideo_cmdbuf_destroy(priv->copy_cmdbuf);
-    envideo_map_destroy(priv->copy_cmdbuf_map);
+    av_envideo_job_pool_uninit(&priv->copy_pool);
     envideo_channel_destroy(priv->copy_channel);
 
     envideo_device_destroy(hwctx->device);
@@ -69,19 +68,11 @@ static int envideo_dev_init(AVHWDeviceContext *ctx) {
     if (err)
         goto fail;
 
-    err = envideo_map_create(hwctx->device, &priv->copy_cmdbuf_map, 0x1000, ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable | EnvideoMap_UsageCmdbuf);
-    if (err)
-        goto fail;
-
-    err = envideo_cmdbuf_create(priv->copy_channel, &priv->copy_cmdbuf);
-    if (err)
-        goto fail;
-
-    err = envideo_cmdbuf_add_memory(priv->copy_cmdbuf, priv->copy_cmdbuf_map, 0,
-                                    envideo_map_get_size(priv->copy_cmdbuf_map));
-    if (err)
-        goto fail;
+#define COPY_CMDBUF_SIZE 0x1000
+    err = av_envideo_job_pool_init(&priv->copy_pool, hwctx->device, priv->copy_channel,
+                                   COPY_CMDBUF_SIZE, ENVIDEO_MAP_ALIGN,
+                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable | EnvideoMap_UsageCmdbuf,
+                                   0, COPY_CMDBUF_SIZE);
 
     return 0;
 
@@ -267,6 +258,8 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
     uint32_t plane_offsets[4];
     int plane_bpp[4] = {0};
     int num_planes = 0, num_maps = 0, i, j, err;
+    AVBufferRef *job_ref = NULL;
+    AVEnvideoJob *job;
 
     from    = !dst->hw_frames_ctx;
     swframe = from ? dst : src, hwframe = from ? src : dst;
@@ -280,6 +273,12 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
 
     for (i = 0; i < desc->nb_components; ++i)
         plane_bpp[desc->comp[i].plane] = desc->comp[i].step;
+
+    job_ref = av_envideo_job_pool_get(&priv->copy_pool, NULL);
+    if (!job_ref)
+        return AVERROR(ENOMEM);
+
+    job = (AVEnvideoJob *)job_ref->data;
 
     /* Create a map for each frame backing buffer */
     for (i = 0; i < FF_ARRAY_ELEMS(maps); num_maps = ++i) {
@@ -318,21 +317,21 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
         plane_offsets[i] = swframe->data[i] - map_bases[j];
     }
 
-    err = envideo_cmdbuf_clear(priv->copy_cmdbuf);
+    err = envideo_cmdbuf_clear(job->cmdbuf);
     if (err)
         goto fail;
 
-    /* If transferring from a hardware frames, wait until former operations on the source data have completed */
+    /* If transferring from a hardware frame, wait until former operations on the source data have completed */
     if (from) {
-        err = envideo_cmdbuf_begin(priv->copy_cmdbuf, EnvideoEngine_Host);
+        err = envideo_cmdbuf_begin(job->cmdbuf, EnvideoEngine_Host);
         if (err < 0)
             return err;
 
-        err = envideo_cmdbuf_wait_fence(priv->copy_cmdbuf, enframe->fence);
+        err = envideo_cmdbuf_wait_fence(job->cmdbuf, enframe->fence);
         if (err < 0)
             return err;
 
-        err = envideo_cmdbuf_end(priv->copy_cmdbuf);
+        err = envideo_cmdbuf_end(job->cmdbuf);
         if (err < 0)
             return err;
     }
@@ -358,13 +357,13 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
             .gob_height = !from ? 2 : 0, /* Engine code assumes GOB_HEIGHT = 2 */
         };
 
-        err = envideo_surface_transfer(priv->copy_cmdbuf, &src_info, &dst_info);
+        err = envideo_surface_transfer(job->cmdbuf, &src_info, &dst_info);
         if (err < 0)
             return err;
     }
 
     /* L2 cache flush will be performed by the kernel during map teardown */
-    err = envideo_channel_submit(priv->copy_channel, priv->copy_cmdbuf, &enframe->fence);
+    err = envideo_channel_submit(priv->copy_channel, job->cmdbuf, &enframe->fence);
     if (err)
         goto fail;
 
@@ -372,7 +371,10 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
     if (err)
         goto fail;
 
+
 fail:
+    av_buffer_unref(&job_ref);
+
     for (i = 0; i < num_maps; ++i)
         envideo_map_destroy(maps[i]);
 
@@ -405,3 +407,112 @@ const HWContextType ff_hwcontext_type_envideo = {
         AV_PIX_FMT_NONE,
     },
 };
+
+static void envideo_job_free(void *opaque, uint8_t *data) {
+    AVEnvideoJob *job = (AVEnvideoJob *)data;
+
+    if (!job)
+        return;
+
+    envideo_cmdbuf_destroy(job->cmdbuf);
+    envideo_map_destroy(job->input_map);
+
+    av_freep(&job);
+}
+
+static AVBufferRef *envideo_job_alloc(void *opaque, size_t size) {
+    AVEnvideoJobPool *pool = opaque;
+
+    AVBufferRef  *buffer;
+    AVEnvideoJob *job;
+    int err;
+
+    job = av_mallocz(sizeof(*job));
+    if (!job)
+        return NULL;
+
+    err = envideo_map_create(pool->device, &job->input_map,
+                             pool->input_map_size, pool->input_map_align, pool->input_map_flags);
+    if (err < 0)
+        return NULL;
+
+    err = envideo_map_pin(job->input_map, pool->channel);
+    if (err < 0)
+        return NULL;
+
+    err = envideo_cmdbuf_create(pool->channel, &job->cmdbuf);
+    if (err < 0)
+        goto fail;
+
+    err = envideo_cmdbuf_add_memory(job->cmdbuf, job->input_map,
+                                    pool->cmdbuf_off, pool->max_cmdbuf_size);
+    if (err < 0)
+        goto fail;
+
+    buffer = av_buffer_create((uint8_t *)job, sizeof(*job), envideo_job_free, pool, 0);
+    if (!buffer)
+        goto fail;
+
+    pool->new_job = true;
+
+    return buffer;
+
+fail:
+    envideo_cmdbuf_destroy(job->cmdbuf);
+    envideo_map_destroy(job->input_map);
+    av_freep(job);
+    return NULL;
+}
+
+int av_envideo_job_pool_init(AVEnvideoJobPool *pool, EnvideoDevice *device, EnvideoChannel *channel,
+                             size_t input_map_size, size_t input_map_align, EnvideoMapFlags input_map_flags,
+                             off_t cmdbuf_off, size_t max_cmdbuf_size)
+{
+    pool->device           = device;
+    pool->channel          = channel;
+    pool->input_map_size   = input_map_size;
+    pool->input_map_align  = input_map_align;
+    pool->input_map_flags  = input_map_flags;
+    pool->cmdbuf_off       = cmdbuf_off;
+    pool->max_cmdbuf_size  = max_cmdbuf_size;
+    pool->pool             = av_buffer_pool_init2(sizeof(AVEnvideoJob), pool,
+                                                  envideo_job_alloc, NULL);
+    if (!pool->pool)
+        return AVERROR(ENOMEM);
+
+    return 0;
+}
+
+int av_envideo_job_pool_uninit(AVEnvideoJobPool *pool) {
+    av_buffer_pool_uninit(&pool->pool);
+    return 0;
+}
+
+AVBufferRef *av_envideo_job_pool_get(AVEnvideoJobPool *pool, bool *new_buffer) {
+    AVBufferRef *job = av_buffer_pool_get(pool->pool);
+    if (!job)
+        return NULL;
+
+    if (pool->new_job) {
+        pool->new_job = false;
+        if (new_buffer)
+            *new_buffer = true;
+    }
+
+    return job;
+}
+
+int av_envideo_job_realloc(AVEnvideoJobPool *pool, AVEnvideoJob *job, size_t size, size_t align) {
+    int err;
+
+    err = envideo_map_realloc(job->input_map, size, align);
+    if (err < 0)
+        return err;
+
+    err = envideo_cmdbuf_add_memory(job->cmdbuf, job->input_map,
+                                    pool->cmdbuf_off, pool->max_cmdbuf_size);
+    if (err < 0)
+        return err;
+
+    return 0;
+}

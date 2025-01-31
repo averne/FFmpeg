@@ -57,4 +57,73 @@ static inline EnvideoMap *av_envideo_frame_get_fbuf_map(const AVFrame *frame) {
     return ((AVEnvideoFrame *)frame->buf[0]->data)->map;
 }
 
+typedef struct AVEnvideoJobPool {
+    /**
+     * Pool object for job allocation
+     */
+    AVBufferPool *pool;
+
+    /**
+     * Hardware device associated with this job pool
+     */
+    EnvideoDevice *device;
+
+    /**
+     * Hardware channel the jobs will be submitted to
+     */
+    EnvideoChannel *channel;
+
+    /**
+     * Total size of the input memory-mapped buffer
+     */
+    size_t input_map_size;
+
+    /**
+     * Alignment of the input memory-mapped buffer
+     */
+    size_t input_map_align;
+
+    /**
+     * Flags for creation of the input memory-mapped buffer
+     */
+    EnvideoMapFlags input_map_flags;
+
+    /**
+     * Whether a new job object was just allocated
+     */
+    bool new_job;
+
+    /**
+     * Offset of the command data within the input map
+     */
+    off_t cmdbuf_off;
+
+    /**
+     * Maximum memory usable by the command buffer
+     */
+    size_t max_cmdbuf_size;
+} AVEnvideoJobPool;
+
+typedef struct AVEnvideoJob {
+    /**
+     * Memory-mapped buffer for command buffers, metadata structures, ...
+     */
+    EnvideoMap *input_map;
+
+    /**
+     * Object for command recording
+     */
+    EnvideoCmdbuf *cmdbuf;
+} AVEnvideoJob;
+
+/**
+ * Job allocation and submission routines
+ */
+int av_envideo_job_pool_init(AVEnvideoJobPool *pool, EnvideoDevice *device, EnvideoChannel *channel,
+                             size_t input_map_size, size_t input_map_align, EnvideoMapFlags input_map_flags,
+                             off_t cmdbuf_off, size_t max_cmdbuf_size);
+int av_envideo_job_pool_uninit(AVEnvideoJobPool *pool);
+AVBufferRef *av_envideo_job_pool_get(AVEnvideoJobPool *pool, bool *new_buffer);
+int av_envideo_job_realloc(AVEnvideoJobPool *pool, AVEnvideoJob *job, size_t size, size_t align);
+
 #endif /* AVUTIL_HWCONTEXT_ENVIDEO_H */

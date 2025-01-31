@@ -202,7 +202,8 @@ static int envideo_mpeg4_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MpegEncContext *s
 {
     FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
     FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    EnvideoMap    *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
+    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap    *input_map = job->input_map;
 
     int err;
 
@@ -256,7 +257,7 @@ static int envideo_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
     EnvideoMPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     FFEnvideoDecodeFrame *tf;
-    EnvideoMap *input_map;
+    AVEnvideoJob *job;
     uint8_t *mem;
     int err;
 
@@ -267,9 +268,9 @@ static int envideo_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
     if (err < 0)
         return err;
 
-    tf = fdd->hwaccel_priv;
-    input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
-    mem = envideo_map_get_cpu_addr(input_map);
+    tf  = fdd->hwaccel_priv;
+    job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     envideo_mpeg4_prepare_frame_setup((nvdec_mpeg4_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
 
@@ -286,24 +287,25 @@ static int envideo_mpeg4_end_frame(AVCodecContext *avctx) {
     AVFrame                 *frame = s->cur_pic.ptr->f;
     FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFEnvideoDecodeFrame       *tf = fdd->hwaccel_priv;
+    AVEnvideoJob              *job = (AVEnvideoJob *)tf->operation.job_ref->data;
 
     nvdec_mpeg4_pic_s *setup;
     uint8_t *mem;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Ending mpeg4-envideo frame with %u slices -> %u bytes\n",
-           ctx->core.num_slices, ctx->core.bitstream_len);
+           tf->operation.num_slices, tf->operation.bitstream_len);
 
-    if (!tf || !ctx->core.num_slices)
+    if (!tf || !tf->operation.num_slices)
         return 0;
 
-    mem = envideo_map_get_cpu_addr((EnvideoMap *)tf->operation.input_map_ref->data);
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvdec_mpeg4_pic_s *)(mem + ctx->core.pic_setup_off);
-    setup->stream_len  = ctx->core.bitstream_len + sizeof(bitstream_end_sequence);
-    setup->slice_count = ctx->core.num_slices;
+    setup->stream_len  = tf->operation.bitstream_len + sizeof(bitstream_end_sequence);
+    setup->slice_count = tf->operation.num_slices;
 
-    err = envideo_mpeg4_prepare_cmdbuf(ctx->core.cmdbuf, s, ctx, frame,
+    err = envideo_mpeg4_prepare_cmdbuf(job->cmdbuf, s, ctx, frame,
                                        ctx->prev_frame, ctx->next_frame);
     if (err < 0)
         return err;

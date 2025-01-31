@@ -264,7 +264,8 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
 {
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFEnvideoDecodeFrame      *tf = fdd->hwaccel_priv;
-    EnvideoMap         *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
+    AVEnvideoJob             *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap         *input_map = job->input_map;
     AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     HEVCContext                *s = avctx->priv_data;
     HEVCLayerContext           *l = &s->layers[s->cur_layer];
@@ -515,7 +516,8 @@ static int envideo_hevc_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, HEVCContext *s,
 {
     FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
     FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    EnvideoMap    *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
+    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap    *input_map = job->input_map;
 
     int i;
     int err;
@@ -575,7 +577,7 @@ static int envideo_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     EnvideoHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     FFEnvideoDecodeFrame *tf;
-    EnvideoMap *input_map;
+    AVEnvideoJob *job;
     uint8_t *mem;
     int err;
 
@@ -589,9 +591,9 @@ static int envideo_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     memset(ctx->refs, 0, sizeof(ctx->refs));
     ctx->refs_mask = 0;
 
-    tf = fdd->hwaccel_priv;
-    input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
-    mem = envideo_map_get_cpu_addr(input_map);
+    tf  = fdd->hwaccel_priv;
+    job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     envideo_hevc_prepare_frame_setup((nvdec_hevc_pic_s *)(mem + ctx->core.pic_setup_off),
                                      avctx, frame, ctx);
@@ -605,23 +607,24 @@ static int envideo_hevc_end_frame(AVCodecContext *avctx) {
     AVFrame                *frame = s->cur_frame->f;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFEnvideoDecodeFrame      *tf = fdd->hwaccel_priv;
+    AVEnvideoJob             *job = (AVEnvideoJob *)tf->operation.job_ref->data;
 
     nvdec_hevc_pic_s *setup;
     uint8_t *mem;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Ending hevc-envideo frame with %u slices -> %u bytes\n",
-           ctx->core.num_slices, ctx->core.bitstream_len);
+           tf->operation.num_slices, tf->operation.bitstream_len);
 
-    if (!tf || !ctx->core.num_slices)
+    if (!tf || !tf->operation.num_slices)
         return 0;
 
-    mem = envideo_map_get_cpu_addr((EnvideoMap *)tf->operation.input_map_ref->data);
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvdec_hevc_pic_s *)(mem + ctx->core.pic_setup_off);
-    setup->stream_len = ctx->core.bitstream_len;
+    setup->stream_len = tf->operation.bitstream_len;
 
-    err = envideo_hevc_prepare_cmdbuf(ctx->core.cmdbuf, s, ctx, frame);
+    err = envideo_hevc_prepare_cmdbuf(job->cmdbuf, s, ctx, frame);
     if (err < 0)
         return err;
 
@@ -635,19 +638,19 @@ static int envideo_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     AVFrame                *frame = s->cur_frame->f;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFEnvideoDecodeFrame      *tf = fdd->hwaccel_priv;
-    EnvideoMap         *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
+    AVEnvideoJob             *job = (AVEnvideoJob *)tf->operation.job_ref->data;
     EnvideoHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     uint8_t *mem;
 
-    mem = envideo_map_get_cpu_addr(input_map);
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     /**
      * Official code adds a 4-byte 00000001 startcode,
      * though decoding was observed to work without it
      */
-    AV_WB8(mem + ctx->core.bitstream_off + ctx->core.bitstream_len, 0);
-    ctx->core.bitstream_len += 1;
+    AV_WB8(mem + ctx->core.bitstream_off + tf->operation.bitstream_len, 0);
+    tf->operation.bitstream_len += 1;
 
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, AV_RB24(buf) != 1);
 }

@@ -192,7 +192,8 @@ static int envideo_mjpeg_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MJpegDecodeContex
 {
     FrameDecodeData     *fdd = (FrameDecodeData *)current_frame->private_ref->data;
     FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    EnvideoMap    *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
+    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap    *input_map = job->input_map;
 
     int err;
 
@@ -252,24 +253,26 @@ static int envideo_mjpeg_end_frame(AVCodecContext *avctx) {
     AVEnvideoFrame        *enframe = (AVEnvideoFrame *)frame->buf[0]->data;
     FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFEnvideoDecodeFrame       *tf = fdd->hwaccel_priv;
+    AVEnvideoJob              *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+
 
     nvjpg_dec_drv_pic_setup_s *setup;
     uint8_t *mem;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Ending mjpeg-envideo frame with %u slices -> %u bytes\n",
-           ctx->core.num_slices, ctx->core.bitstream_len);
+           tf->operation.num_slices, tf->operation.bitstream_len);
 
-    if (!tf || !ctx->core.num_slices)
+    if (!tf || !tf->operation.num_slices)
         return 0;
 
-    mem = envideo_map_get_cpu_addr((EnvideoMap *)tf->operation.input_map_ref->data);
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off);
     setup->bitstream_offset = 0;
-    setup->bitstream_size   = ctx->core.bitstream_len;
+    setup->bitstream_size   = tf->operation.bitstream_len;
 
-    err = envideo_mjpeg_prepare_cmdbuf(ctx->core.cmdbuf, s, ctx, frame);
+    err = envideo_mjpeg_prepare_cmdbuf(job->cmdbuf, s, ctx, frame);
     if (err < 0)
         return err;
 
@@ -283,14 +286,13 @@ static int envideo_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     EnvideoMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                 *frame = s->picture;
     FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FFEnvideoDecodeFrame       *tf = fdd->hwaccel_priv;
+    AVEnvideoJob              *job = (AVEnvideoJob *)tf->operation.job_ref->data;
 
-    FFEnvideoDecodeFrame *tf;
-    EnvideoMap *input_map;
     uint8_t *mem;
 
     tf = fdd->hwaccel_priv;
-    input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
-    mem = envideo_map_get_cpu_addr(input_map);
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     /* The JFIF headers haven't been entirely parsed yet when the start_frame callback is invoked */
     envideo_mjpeg_prepare_frame_setup((nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off), s, ctx);

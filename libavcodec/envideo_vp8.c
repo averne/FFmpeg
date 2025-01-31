@@ -198,7 +198,8 @@ static int envideo_vp8_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP8Context *h,
 {
     FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
     FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    EnvideoMap    *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
+    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap    *input_map = job->input_map;
 
     int err;
 
@@ -251,7 +252,7 @@ static int envideo_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     EnvideoVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     FFEnvideoDecodeFrame *tf;
-    EnvideoMap *input_map;
+    AVEnvideoJob *job;
     uint8_t *mem;
     int err;
 
@@ -262,9 +263,9 @@ static int envideo_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     if (err < 0)
         return err;
 
-    tf = fdd->hwaccel_priv;
-    input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
-    mem = envideo_map_get_cpu_addr(input_map);
+    tf  = fdd->hwaccel_priv;
+    job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     envideo_vp8_prepare_frame_setup((nvdec_vp8_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
 
@@ -282,23 +283,24 @@ static int envideo_vp8_end_frame(AVCodecContext *avctx) {
     AVFrame               *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFEnvideoDecodeFrame     *tf = fdd->hwaccel_priv;
+    AVEnvideoJob            *job = (AVEnvideoJob *)tf->operation.job_ref->data;
 
     nvdec_vp8_pic_s *setup;
     uint8_t *mem;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Ending vp8-envideo frame with %u slices -> %u bytes\n",
-           ctx->core.num_slices, ctx->core.bitstream_len);
+           tf->operation.num_slices, tf->operation.bitstream_len);
 
-    if (!tf || !ctx->core.num_slices)
+    if (!tf || !tf->operation.num_slices)
         return 0;
 
-    mem = envideo_map_get_cpu_addr((EnvideoMap *)tf->operation.input_map_ref->data);
+    mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvdec_vp8_pic_s *)(mem + ctx->core.pic_setup_off);
-    setup->VLDBufferSize = ctx->core.bitstream_len;
+    setup->VLDBufferSize = tf->operation.bitstream_len;
 
-    err = envideo_vp8_prepare_cmdbuf(ctx->core.cmdbuf, h, ctx, frame);
+    err = envideo_vp8_prepare_cmdbuf(job->cmdbuf, h, ctx, frame);
     if (err < 0)
         return err;
 

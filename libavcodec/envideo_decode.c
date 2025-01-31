@@ -31,48 +31,6 @@
 #include "decode.h"
 #include "envideo_decode.h"
 
-static void envideo_input_map_free(void *opaque, uint8_t *data) {
-    EnvideoMap *map = (EnvideoMap *)data;
-
-    if (!data)
-        return;
-
-    envideo_map_destroy(map);
-}
-
-static AVBufferRef *envideo_input_map_alloc(void *opaque, size_t size) {
-    FFEnvideoDecodeContext        *ctx = opaque;
-    AVHWDeviceContext   *hw_device_ctx = (AVHWDeviceContext *)ctx->hw_device_ref->data;
-    AVEnvideoDeviceContext *device_ctx = hw_device_ctx->hwctx;
-
-    AVBufferRef *buffer;
-    EnvideoMap  *map;
-    int err;
-
-    err = envideo_map_create(device_ctx->device, &map, ctx->input_map_size, ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
-    if (err < 0)
-        return NULL;
-
-    err = envideo_map_pin(map, ctx->channel);
-    if (err < 0)
-        return NULL;
-
-    buffer = av_buffer_create((uint8_t *)map, sizeof(map), envideo_input_map_free, ctx, 0);
-    if (!buffer)
-        goto fail;
-
-    ctx->new_input_buffer = true;
-
-    return buffer;
-
-fail:
-    av_log(hw_device_ctx, AV_LOG_ERROR, "Failed to create input buffer for decode job\n");
-    envideo_map_destroy(map);
-    av_freep(map);
-    return NULL;
-}
-
 int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
     AVHWFramesContext      *frames_ctx;
     AVHWDeviceContext      *hw_device_ctx;
@@ -94,13 +52,6 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
         goto fail;
     }
 
-    ctx->decoder_pool = av_buffer_pool_init2(ctx->input_map_size, ctx,
-                                             envideo_input_map_alloc, NULL);
-    if (!ctx->decoder_pool) {
-        err = AVERROR(ENOMEM);
-        goto fail;
-    }
-
     err = envideo_channel_create(device_ctx->device, &ctx->channel,
                                  !ctx->is_nvjpg ? EnvideoEngine_Nvdec : EnvideoEngine_Nvjpg);
     if (err < 0)
@@ -110,9 +61,10 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
     if (err < 0)
         goto fail;
 
-    err = envideo_cmdbuf_create(ctx->channel, &ctx->cmdbuf);
-    if (err < 0)
-        goto fail;
+    err = av_envideo_job_pool_init(&ctx->pool, device_ctx->device, ctx->channel,
+                                   ctx->input_map_size, ENVIDEO_MAP_ALIGN,
+                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable | EnvideoMap_UsageCmdbuf,
+                                   ctx->cmdbuf_off, ctx->max_cmdbuf_size);
 
     return 0;
 
@@ -125,6 +77,7 @@ int ff_envideo_decode_uninit(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx)
     AVHWFramesContext      *frames_ctx;
     AVHWDeviceContext      *hw_device_ctx;
     AVEnvideoDeviceContext *device_ctx;
+    FFEnvideoOperation *op;
     int i;
 
     if (avctx->hw_frames_ctx) {
@@ -133,23 +86,22 @@ int ff_envideo_decode_uninit(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx)
         device_ctx    = hw_device_ctx->hwctx;
 
         for (i = 0; i < ctx->num_operations; ++i) {
-            envideo_fence_wait(device_ctx->device, ctx->operations[i].fence, UINT64_MAX);
-            av_buffer_unref(&ctx->operations[i].input_map_ref);
+            op  = &ctx->operations[i];
+            envideo_fence_wait(device_ctx->device, op->fence, UINT64_MAX);
+            av_buffer_unref(&op->job_ref);
         }
     }
 
     av_freep(&ctx->operations);
     ctx->num_operations = 0;
 
-    av_buffer_pool_uninit(&ctx->decoder_pool);
-
-    av_buffer_unref(&ctx->hw_device_ref);
-
-    envideo_cmdbuf_destroy(ctx->cmdbuf);
+    av_envideo_job_pool_uninit(&ctx->pool);
 
     envideo_dfs_finalize(ctx->channel);
 
     envideo_channel_destroy(ctx->channel);
+
+    av_buffer_unref(&ctx->hw_device_ref);
 
     return 0;
 }
@@ -159,7 +111,7 @@ static void envideo_fdd_priv_free(void *priv) {
     if (!tf)
         return;
 
-    av_buffer_unref(&tf->operation.input_map_ref);
+    av_buffer_unref(&tf->operation.job_ref);
     av_freep(&tf);
 }
 
@@ -192,19 +144,17 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
 
     FFEnvideoOperation   *op = NULL;
     FFEnvideoDecodeFrame *tf = NULL;
+    AVEnvideoJob *job;
     nvdec_status_s   *nvdec_status;
     nvjpg_dec_status *nvjpg_status;
     uint32_t decode_cycles;
-    EnvideoMap *map;
     uint8_t *mem;
-    bool is_done;
-    int i, err;
+    bool is_done, new_buffer = false;
+    int i, err = 0;
 
     /* Abort on resolution changes that wouldn't fit into the frame */
     if ((frame->width > frames_ctx->width) || (frame->height > frames_ctx->height))
         return AVERROR(EINVAL);
-
-    ctx->bitstream_len = ctx->num_slices = 0;
 
     /**
      * Free up input buffers from the pool if the associated job is completed.
@@ -213,15 +163,15 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
      */
     for (i = 0; i < ctx->num_operations; ++i) {
         op = &ctx->operations[i];
-        if (!op->input_map_ref)
+        if (!op->job_ref)
             continue;
 
         err = envideo_fence_poll(device_ctx->device, op->fence, &is_done);
         if (err < 0 || !is_done)
             continue;
 
-        map = (EnvideoMap *)op->input_map_ref->data;
-        mem = envideo_map_get_cpu_addr(map);
+        job = (AVEnvideoJob *)op->job_ref->data;
+        mem = envideo_map_get_cpu_addr(job->input_map);
 
         if (!ctx->is_nvjpg) {
             nvdec_status = (nvdec_status_s *)(mem + ctx->status_off);
@@ -237,7 +187,7 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
             decode_cycles = nvjpg_status->cycle_count;
         }
 
-        av_buffer_unref(&op->input_map_ref);
+        av_buffer_unref(&op->job_ref);
 
         if (err < 0)
             break;
@@ -274,22 +224,22 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
 
         tf->ctx = ctx;
 
-        tf->operation.input_map_ref = av_buffer_pool_get(ctx->decoder_pool);
-        if (!tf->operation.input_map_ref) {
+        tf->operation.job_ref = av_envideo_job_pool_get(&ctx->pool, &new_buffer);
+        if (!tf->operation.job_ref) {
             err = AVERROR(ENOMEM);
             goto fail;
         }
     }
 
     tf = fdd->hwaccel_priv;
-    tf->in_flight = false;
+    tf->in_flight        = false;
+    tf->new_input_buffer = new_buffer;
 
-    err = envideo_cmdbuf_add_memory(ctx->cmdbuf, (EnvideoMap *)tf->operation.input_map_ref->data,
-                                    ctx->cmdbuf_off, ctx->max_cmdbuf_size);
-    if (err < 0)
-        return err;
+    op  = &tf->operation;
+    job = (AVEnvideoJob *)op->job_ref->data;
+    op->bitstream_len = op->num_slices = 0;
 
-    err = envideo_cmdbuf_clear(ctx->cmdbuf);
+    err = envideo_cmdbuf_clear(job->cmdbuf);
     if (err < 0)
         return err;
 
@@ -310,7 +260,9 @@ int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     FFEnvideoDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     FrameDecodeData        *fdd = (FrameDecodeData *)frame->private_ref->data;
     FFEnvideoDecodeFrame    *tf = fdd->hwaccel_priv;
-    EnvideoMap       *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
+    FFEnvideoOperation      *op = &tf->operation;
+    AVEnvideoJob           *job = (AVEnvideoJob *)op->job_ref->data;
+    EnvideoMap       *input_map = job->input_map;
 
     bool need_bitstream_move = false;
     uint32_t old_bitstream_off, startcode_size;
@@ -322,7 +274,7 @@ int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     startcode_size = add_startcode ? 3 : 0;
 
     /* Reserve 16 bytes for the termination sequence */
-    if (ctx->bitstream_len + buf_size + startcode_size >= ctx->max_bitstream_size - 16) {
+    if (op->bitstream_len + buf_size + startcode_size >= ctx->max_bitstream_size - 16) {
         ctx->input_map_size += ctx->max_bitstream_size + buf_size;
         ctx->input_map_size  = FFALIGN(ctx->input_map_size, 0x1000);
 
@@ -332,7 +284,7 @@ int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     }
 
     /* Reserve 4 bytes for the bitstream size */
-    if (ctx->max_num_slices &&  ctx->num_slices >= ctx->max_num_slices - 1) {
+    if (ctx->max_num_slices && op->num_slices >= ctx->max_num_slices - 1) {
         ctx->input_map_size += ctx->max_num_slices * sizeof(uint32_t);
         ctx->input_map_size  = FFALIGN(ctx->input_map_size, 0x1000);
 
@@ -345,35 +297,31 @@ int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     }
 
     if (ctx->input_map_size != envideo_map_get_size(input_map)) {
-        err = envideo_map_realloc(input_map, ctx->input_map_size, ENVIDEO_MAP_ALIGN);
+        err = av_envideo_job_realloc(&ctx->pool, job, ctx->input_map_size, ENVIDEO_MAP_ALIGN);
         if (err < 0)
             return err;
 
         mem = envideo_map_get_cpu_addr(input_map);
-
-        err = envideo_cmdbuf_add_memory(ctx->cmdbuf, input_map,
-                                        ctx->cmdbuf_off, ctx->max_cmdbuf_size);
         if (err < 0)
             return err;
 
         /* Running out of slice offsets mem shouldn't happen so the extra memmove is fine */
         if (need_bitstream_move)
-            memmove(mem + ctx->bitstream_off, mem + old_bitstream_off, ctx->bitstream_len);
+            memmove(mem + ctx->bitstream_off, mem + old_bitstream_off, op->bitstream_len);
     }
 
     if (ctx->max_num_slices)
-        ((uint32_t *)(mem + ctx->slice_offsets_off))[ctx->num_slices] = ctx->bitstream_len;
+        ((uint32_t *)(mem + ctx->slice_offsets_off))[op->num_slices] = op->bitstream_len;
 
     /* NAL startcode 000001 */
     if (add_startcode) {
-        AV_WB24(mem + ctx->bitstream_off + ctx->bitstream_len, 1);
-        ctx->bitstream_len += 3;
+        AV_WB24(mem + ctx->bitstream_off + op->bitstream_len, 1);
+        op->bitstream_len += 3;
     }
 
-    memcpy(mem + ctx->bitstream_off + ctx->bitstream_len, buf, buf_size);
-    ctx->bitstream_len += buf_size;
-
-    ctx->num_slices++;
+    memcpy(mem + ctx->bitstream_off + op->bitstream_len, buf, buf_size);
+    op->bitstream_len += buf_size;
+    op->num_slices++;
 
     return 0;
 }
@@ -381,12 +329,13 @@ int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
 int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeContext *ctx,
                          const uint8_t *end_sequence, int end_sequence_size)
 {
-    FrameDecodeData        *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame    *tf = fdd->hwaccel_priv;
-    EnvideoMap       *input_map = (EnvideoMap *)tf->operation.input_map_ref->data;
-    AVEnvideoFrame     *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
+    FrameDecodeData     *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
+    FFEnvideoOperation   *op = &tf->operation;
+    AVEnvideoJob        *job = (AVEnvideoJob *)op->job_ref->data;
+    EnvideoMap    *input_map = job->input_map;
+    AVEnvideoFrame  *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
 
-    FFEnvideoOperation *op = NULL;
     uint8_t *mem;
     int i, err;
 
@@ -394,14 +343,14 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeC
 
     /* Last slice data range */
     if (ctx->max_num_slices)
-        ((uint32_t *)(mem + ctx->slice_offsets_off))[ctx->num_slices] = ctx->bitstream_len;
+        ((uint32_t *)(mem + ctx->slice_offsets_off))[op->num_slices] = op->bitstream_len;
 
     /* Termination sequence for the bitstream data */
     if (end_sequence_size)
-        memcpy(mem + ctx->bitstream_off + ctx->bitstream_len, end_sequence, end_sequence_size);
+        memcpy(mem + ctx->bitstream_off + op->bitstream_len, end_sequence, end_sequence_size);
 
     for (i = 0; i < ctx->num_operations; ++i) {
-        if (!ctx->operations[i].input_map_ref)
+        if (!ctx->operations[i].job_ref)
             break;
     }
 
@@ -415,21 +364,21 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeC
 
     op = &ctx->operations[i];
 
-    err = envideo_channel_submit(ctx->channel, ctx->cmdbuf, &tf->operation.fence);
+    err = envideo_channel_submit(ctx->channel, job->cmdbuf, &tf->operation.fence);
     if (err < 0)
         return err;
 
     tf->in_flight = true;
 
-    err = av_buffer_replace(&op->input_map_ref, tf->operation.input_map_ref);
+    err = av_buffer_replace(&op->job_ref, tf->operation.job_ref);
     if (err < 0)
         return err;
 
-    op->fence = evframe->fence = tf->operation.fence;
-    op->bitstream_len = ctx->bitstream_len;
+    op->fence         = tf->operation.fence;
+    op->bitstream_len = tf->operation.bitstream_len;
+    evframe->fence    = op->fence;
 
     ctx->frame_idx++;
-    ctx->new_input_buffer = false;
 
     return 0;
 }
