@@ -64,31 +64,38 @@ static int envideo_mpeg12_decode_uninit(AVCodecContext *avctx) {
 static int envideo_mpeg12_decode_init(AVCodecContext *avctx) {
     EnvideoMPEG12DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
+    FFEnvideoDecodeContextShared *sc;
     uint32_t num_slices;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing mpeg12-envideo decoder\n");
+
+    err = ff_envideo_alloc_shared(&ctx->core);
+    if (err < 0)
+        goto fail;
+
+    sc = ctx->core.shared;
 
     num_slices = (FFALIGN(avctx->coded_width,  MB_SIZE) / MB_SIZE) *
                  (FFALIGN(avctx->coded_height, MB_SIZE) / MB_SIZE);
     num_slices = FFMIN(num_slices, 8160);
 
     /* Ignored: histogram map, size 0x400 */
-    ctx->core.pic_setup_off     = 0;
-    ctx->core.status_off        = FFALIGN(ctx->core.pic_setup_off     + sizeof(nvdec_mpeg2_pic_s),
-                                          ENVIDEO_MAP_ALIGN);
-    ctx->core.cmdbuf_off        = FFALIGN(ctx->core.status_off        + sizeof(nvdec_status_s),
-                                          ENVIDEO_MAP_ALIGN);
-    ctx->core.slice_offsets_off = FFALIGN(ctx->core.cmdbuf_off        + ENVIDEO_MAP_ALIGN,
-                                          ENVIDEO_MAP_ALIGN);
-    ctx->core.bitstream_off     = FFALIGN(ctx->core.slice_offsets_off + num_slices * sizeof(uint32_t),
-                                          ENVIDEO_MAP_ALIGN);
-    ctx->core.input_map_size    = FFALIGN(ctx->core.bitstream_off     + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
-                                          0x1000);
+    sc->pic_setup_off        = 0;
+    sc->status_off           = FFALIGN(sc->pic_setup_off     + sizeof(nvdec_mpeg2_pic_s),
+                                       ENVIDEO_MAP_ALIGN);
+    sc->cmdbuf_off           = FFALIGN(sc->status_off        + sizeof(nvdec_status_s),
+                                       ENVIDEO_MAP_ALIGN);
+    sc->slice_offsets_off    = FFALIGN(sc->cmdbuf_off        + ENVIDEO_MAP_ALIGN,
+                                       ENVIDEO_MAP_ALIGN);
+    sc->bitstream_off        = FFALIGN(sc->slice_offsets_off + num_slices * sizeof(uint32_t),
+                                       ENVIDEO_MAP_ALIGN);
+    ctx->core.input_map_size = FFALIGN(sc->bitstream_off     + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
+                                       0x1000);
 
-    ctx->core.max_cmdbuf_size    =  ctx->core.slice_offsets_off - ctx->core.cmdbuf_off;
-    ctx->core.max_num_slices     = (ctx->core.bitstream_off     - ctx->core.slice_offsets_off) / sizeof(uint32_t);
-    ctx->core.max_bitstream_size =  ctx->core.input_map_size    - ctx->core.bitstream_off;
+    sc->max_cmdbuf_size          =  sc->slice_offsets_off    - sc->cmdbuf_off;
+    sc->max_num_slices           = (sc->bitstream_off        - sc->slice_offsets_off) / sizeof(uint32_t);
+    ctx->core.max_bitstream_size =  ctx->core.input_map_size - sc->bitstream_off;
 
     err = ff_envideo_decode_init(avctx, &ctx->core);
     if (err < 0)
@@ -155,10 +162,11 @@ static void envideo_mpeg12_prepare_frame_setup(nvdec_mpeg2_pic_s *setup, MpegEnc
 static int envideo_mpeg12_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MpegEncContext *s, EnvideoMPEG12DecodeContext *ctx,
                                          AVFrame *current_frame, AVFrame *prev_frame, AVFrame *next_frame)
 {
-    FrameDecodeData     *fdd = (FrameDecodeData *)current_frame->private_ref->data;
-    FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    EnvideoMap    *input_map = job->input_map;
+    FFEnvideoDecodeContextShared *sc = ctx->core.shared;
+    FrameDecodeData             *fdd = (FrameDecodeData *)current_frame->private_ref->data;
+    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap            *input_map = job->input_map;
 
     int err, codec_id;
 
@@ -185,10 +193,10 @@ static int envideo_mpeg12_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MpegEncContext *
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVC9B0_SET_PICTURE_INDEX,
                           DRF_NUM(C9B0, _SET_PICTURE_INDEX, _INDEX, ctx->core.frame_idx));
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET,     input_map, ctx->core.pic_setup_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,       input_map, ctx->core.bitstream_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_SLICE_OFFSETS_BUF_OFFSET, input_map, ctx->core.slice_offsets_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,      input_map, ctx->core.status_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET,     input_map, sc->pic_setup_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,       input_map, sc->bitstream_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_SLICE_OFFSETS_BUF_OFFSET, input_map, sc->slice_offsets_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,      input_map, sc->status_off);
 
 #define PUSH_FRAME(fr, offset) ({                                                               \
     FF_ENVIDEO_PUSH_RELOC_TILED(cmdbuf, NVC9B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,         \
@@ -233,7 +241,7 @@ static int envideo_mpeg12_start_frame(AVCodecContext *avctx, const uint8_t *buf,
     job = (AVEnvideoJob *)tf->operation.job_ref->data;
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    envideo_mpeg12_prepare_frame_setup((nvdec_mpeg2_pic_s *)(mem + ctx->core.pic_setup_off), s, ctx);
+    envideo_mpeg12_prepare_frame_setup((nvdec_mpeg2_pic_s *)(mem + ctx->core.shared->pic_setup_off), s, ctx);
 
     ctx->prev_frame = (s->pict_type != AV_PICTURE_TYPE_I && s->last_pic.ptr) ? s->last_pic.ptr->f : frame;
     ctx->next_frame = (s->pict_type == AV_PICTURE_TYPE_B && s->next_pic.ptr) ? s->next_pic.ptr->f : frame;
@@ -261,7 +269,7 @@ static int envideo_mpeg12_end_frame(AVCodecContext *avctx) {
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    setup = (nvdec_mpeg2_pic_s *)(mem + ctx->core.pic_setup_off);
+    setup = (nvdec_mpeg2_pic_s *)(mem + ctx->core.shared->pic_setup_off);
     setup->stream_len  = tf->operation.bitstream_len + sizeof(bitstream_end_sequence);
     setup->slice_count = tf->operation.num_slices;
 
@@ -281,36 +289,45 @@ static int envideo_mpeg12_decode_slice(AVCodecContext *avctx, const uint8_t *buf
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
 }
 
+static int envideo_mpeg12_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
+    EnvideoMPEG12DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
+    EnvideoMPEG12DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
+
+    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
+}
+
 #if CONFIG_MPEG1_ENVIDEO_HWACCEL
 const FFHWAccel ff_mpeg1_envideo_hwaccel = {
-    .p.name         = "mpeg1_envideo",
-    .p.type         = AVMEDIA_TYPE_VIDEO,
-    .p.id           = AV_CODEC_ID_MPEG1VIDEO,
-    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
-    .start_frame    = &envideo_mpeg12_start_frame,
-    .end_frame      = &envideo_mpeg12_end_frame,
-    .decode_slice   = &envideo_mpeg12_decode_slice,
-    .init           = &envideo_mpeg12_decode_init,
-    .uninit         = &envideo_mpeg12_decode_uninit,
-    .frame_params   = &ff_envideo_frame_params,
-    .priv_data_size = sizeof(EnvideoMPEG12DecodeContext),
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name                = "mpeg1_envideo",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_MPEG1VIDEO,
+    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
+    .start_frame           = &envideo_mpeg12_start_frame,
+    .end_frame             = &envideo_mpeg12_end_frame,
+    .decode_slice          = &envideo_mpeg12_decode_slice,
+    .init                  = &envideo_mpeg12_decode_init,
+    .uninit                = &envideo_mpeg12_decode_uninit,
+    .frame_params          = &ff_envideo_frame_params,
+    .update_thread_context = &envideo_mpeg12_update_thread_context,
+    .priv_data_size        = sizeof(EnvideoMPEG12DecodeContext),
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
 };
 #endif
 
 #if CONFIG_MPEG2_ENVIDEO_HWACCEL
 const FFHWAccel ff_mpeg2_envideo_hwaccel = {
-    .p.name         = "mpeg2_envideo",
-    .p.type         = AVMEDIA_TYPE_VIDEO,
-    .p.id           = AV_CODEC_ID_MPEG2VIDEO,
-    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
-    .start_frame    = &envideo_mpeg12_start_frame,
-    .end_frame      = &envideo_mpeg12_end_frame,
-    .decode_slice   = &envideo_mpeg12_decode_slice,
-    .init           = &envideo_mpeg12_decode_init,
-    .uninit         = &envideo_mpeg12_decode_uninit,
-    .frame_params   = &ff_envideo_frame_params,
-    .priv_data_size = sizeof(EnvideoMPEG12DecodeContext),
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name                = "mpeg2_envideo",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_MPEG2VIDEO,
+    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
+    .start_frame           = &envideo_mpeg12_start_frame,
+    .end_frame             = &envideo_mpeg12_end_frame,
+    .decode_slice          = &envideo_mpeg12_decode_slice,
+    .init                  = &envideo_mpeg12_decode_init,
+    .uninit                = &envideo_mpeg12_decode_uninit,
+    .frame_params          = &ff_envideo_frame_params,
+    .update_thread_context = &envideo_mpeg12_update_thread_context,
+    .priv_data_size        = sizeof(EnvideoMPEG12DecodeContext),
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
 };
 #endif

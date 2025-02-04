@@ -55,7 +55,7 @@ static int envideo_mjpeg_decode_init(AVCodecContext *avctx) {
     MJpegDecodeContext          *s = avctx->priv_data;
     EnvideoMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-
+    FFEnvideoDecodeContextShared *sc;
     enum AVPixelFormat fmt;
     int luma, err;
 
@@ -74,20 +74,26 @@ static int envideo_mjpeg_decode_init(AVCodecContext *avctx) {
         return AVERROR(EINVAL);
     }
 
-    ctx->core.pic_setup_off  = 0;
-    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvjpg_dec_drv_pic_setup_s),
+    err = ff_envideo_alloc_shared(&ctx->core);
+    if (err < 0)
+        goto fail;
+
+    sc = ctx->core.shared;
+
+    sc->pic_setup_off        = 0;
+    sc->status_off           = FFALIGN(sc->pic_setup_off + sizeof(nvjpg_dec_drv_pic_setup_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvjpg_dec_status),
+    sc->cmdbuf_off           = FFALIGN(sc->status_off    + sizeof(nvjpg_dec_status),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + ENVIDEO_MAP_ALIGN,
+    sc->bitstream_off        = FFALIGN(sc->cmdbuf_off    + ENVIDEO_MAP_ALIGN,
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
+    ctx->core.input_map_size = FFALIGN(sc->bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    =  ctx->core.slice_offsets_off - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size =  ctx->core.input_map_size    - ctx->core.bitstream_off;
+    sc->max_cmdbuf_size          =  sc->bitstream_off        - sc->cmdbuf_off;
+    ctx->core.max_bitstream_size =  ctx->core.input_map_size - sc->bitstream_off;
 
-    ctx->core.is_nvjpg = true;
+    sc->is_nvjpg = true;
 
     err = ff_envideo_decode_init(avctx, &ctx->core);
     if (err < 0)
@@ -190,10 +196,11 @@ static void envideo_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, 
 static int envideo_mjpeg_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MJpegDecodeContext *s,
                                         EnvideoMJPEGDecodeContext *ctx, AVFrame *current_frame)
 {
-    FrameDecodeData     *fdd = (FrameDecodeData *)current_frame->private_ref->data;
-    FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    EnvideoMap    *input_map = job->input_map;
+    FFEnvideoDecodeContextShared *sc = ctx->core.shared;
+    FrameDecodeData             *fdd = (FrameDecodeData *)current_frame->private_ref->data;
+    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap            *input_map = job->input_map;
 
     int err;
 
@@ -209,9 +216,9 @@ static int envideo_mjpeg_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MJpegDecodeContex
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVE7D0_SET_PICTURE_INDEX,
                           DRF_NUM(E7D0, _SET_PICTURE_INDEX, _INDEX, ctx->core.frame_idx));
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_IN_DRV_PIC_SETUP, input_map, ctx->core.pic_setup_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_BITSTREAM,        input_map, ctx->core.bitstream_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_OUT_STATUS,       input_map, ctx->core.status_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_IN_DRV_PIC_SETUP, input_map, sc->pic_setup_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_BITSTREAM,        input_map, sc->bitstream_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_OUT_STATUS,       input_map, sc->status_off);
 
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC,
                           av_envideo_frame_get_fbuf_map(current_frame), 0);
@@ -247,13 +254,14 @@ static int envideo_mjpeg_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
 }
 
 static int envideo_mjpeg_end_frame(AVCodecContext *avctx) {
-    MJpegDecodeContext          *s = avctx->priv_data;
-    EnvideoMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame                 *frame = s->picture;
-    AVEnvideoFrame        *enframe = (AVEnvideoFrame *)frame->buf[0]->data;
-    FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame       *tf = fdd->hwaccel_priv;
-    AVEnvideoJob              *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    MJpegDecodeContext            *s = avctx->priv_data;
+    EnvideoMJPEGDecodeContext   *ctx = avctx->internal->hwaccel_priv_data;
+    FFEnvideoDecodeContextShared *sc = ctx->core.shared;
+    AVFrame                   *frame = s->picture;
+    AVEnvideoFrame          *enframe = (AVEnvideoFrame *)frame->buf[0]->data;
+    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
 
 
     nvjpg_dec_drv_pic_setup_s *setup;
@@ -268,7 +276,7 @@ static int envideo_mjpeg_end_frame(AVCodecContext *avctx) {
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    setup = (nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off);
+    setup = (nvjpg_dec_drv_pic_setup_s *)(mem + sc->pic_setup_off);
     setup->bitstream_offset = 0;
     setup->bitstream_size   = tf->operation.bitstream_len;
 
@@ -282,12 +290,13 @@ static int envideo_mjpeg_end_frame(AVCodecContext *avctx) {
 }
 
 static int envideo_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
-    MJpegDecodeContext          *s = avctx->priv_data;
-    EnvideoMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
-    AVFrame                 *frame = s->picture;
-    FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame       *tf = fdd->hwaccel_priv;
-    AVEnvideoJob              *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    MJpegDecodeContext            *s = avctx->priv_data;
+    EnvideoMJPEGDecodeContext   *ctx = avctx->internal->hwaccel_priv_data;
+    FFEnvideoDecodeContextShared *sc = ctx->core.shared;
+    AVFrame                   *frame = s->picture;
+    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
 
     uint8_t *mem;
 
@@ -295,24 +304,32 @@ static int envideo_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     mem = envideo_map_get_cpu_addr(job->input_map);
 
     /* The JFIF headers haven't been entirely parsed yet when the start_frame callback is invoked */
-    envideo_mjpeg_prepare_frame_setup((nvjpg_dec_drv_pic_setup_s *)(mem + ctx->core.pic_setup_off), s, ctx);
+    envideo_mjpeg_prepare_frame_setup((nvjpg_dec_drv_pic_setup_s *)(mem + sc->pic_setup_off), s, ctx);
 
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
 }
 
+static int envideo_mjpeg_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
+    EnvideoMJPEGDecodeContext *src_ctx = src->internal->hwaccel_priv_data;
+    EnvideoMJPEGDecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
+
+    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
+}
+
 #if CONFIG_MJPEG_ENVIDEO_HWACCEL
 const FFHWAccel ff_mjpeg_envideo_hwaccel = {
-    .p.name         = "mjpeg_envideo",
-    .p.type         = AVMEDIA_TYPE_VIDEO,
-    .p.id           = AV_CODEC_ID_MJPEG,
-    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
-    .start_frame    = &envideo_mjpeg_start_frame,
-    .end_frame      = &envideo_mjpeg_end_frame,
-    .decode_slice   = &envideo_mjpeg_decode_slice,
-    .init           = &envideo_mjpeg_decode_init,
-    .uninit         = &envideo_mjpeg_decode_uninit,
-    .frame_params   = &ff_envideo_frame_params,
-    .priv_data_size = sizeof(EnvideoMJPEGDecodeContext),
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name                = "mjpeg_envideo",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_MJPEG,
+    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
+    .start_frame           = &envideo_mjpeg_start_frame,
+    .end_frame             = &envideo_mjpeg_end_frame,
+    .decode_slice          = &envideo_mjpeg_decode_slice,
+    .init                  = &envideo_mjpeg_decode_init,
+    .uninit                = &envideo_mjpeg_decode_uninit,
+    .frame_params          = &ff_envideo_frame_params,
+    .update_thread_context = &envideo_mjpeg_update_thread_context,
+    .priv_data_size        = sizeof(EnvideoMJPEGDecodeContext),
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
 };
 #endif

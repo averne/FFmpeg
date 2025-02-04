@@ -34,12 +34,15 @@
 
 #include "libavutil/pixdesc.h"
 
-typedef struct EnvideoVP8DecodeContext {
-    FFEnvideoDecodeContext core;
-
+typedef struct EnvideoVP8DecodeContextShared {
     EnvideoMap *common_map;
     uint32_t prob_data_off, history_off;
     uint32_t history_size;
+} EnvideoVP8DecodeContextShared;
+
+typedef struct EnvideoVP8DecodeContext {
+    FFEnvideoDecodeContext core;
+    EnvideoVP8DecodeContextShared *shared;
 
     AVFrame *golden_frame, *altref_frame,
             *previous_frame;
@@ -55,9 +58,7 @@ static int envideo_vp8_decode_uninit(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Deinitializing vp8-envideo decoder\n");
 
-    err = envideo_map_destroy(ctx->common_map);
-    if (err < 0)
-        return err;
+    av_refstruct_unref(&ctx->shared);
 
     err = ff_envideo_decode_uninit(avctx, &ctx->core);
     if (err < 0)
@@ -93,54 +94,75 @@ static void envideo_vp8_init_probs(void *p) {
     }
 }
 
+static void envideo_vp8_shared_free(AVRefStructOpaque opaque, void *obj) {
+    EnvideoVP8DecodeContextShared *shared = obj;
+
+    envideo_map_destroy(shared->common_map);
+}
+
 static int envideo_vp8_decode_init(AVCodecContext *avctx) {
     EnvideoVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     AVHWDeviceContext      *hw_device_ctx;
     AVEnvideoDeviceContext *device_hwctx;
+    EnvideoVP8DecodeContextShared *ss;
+    FFEnvideoDecodeContextShared *sc;
     uint32_t width_in_mbs, common_map_size;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing vp8-envideo decoder\n");
 
+    ctx->shared = av_refstruct_alloc_ext(sizeof(*ctx->shared), 0, NULL, envideo_vp8_shared_free);
+    if (!ctx->shared) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    err = ff_envideo_alloc_shared(&ctx->core);
+    if (err < 0)
+        goto fail;
+
+    ss = ctx->shared;
+    sc = ctx->core.shared;
+
     /* Ignored: histogram map, size 0x400 */
-    ctx->core.pic_setup_off  = 0;
-    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp8_pic_s),
+    sc->pic_setup_off        = 0;
+    sc->status_off           = FFALIGN(sc->pic_setup_off + sizeof(nvdec_vp8_pic_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
+    sc->cmdbuf_off           = FFALIGN(sc->status_off    + sizeof(nvdec_status_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + ENVIDEO_MAP_ALIGN,
+    sc->bitstream_off        = FFALIGN(sc->cmdbuf_off    + ENVIDEO_MAP_ALIGN,
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
+    ctx->core.input_map_size = FFALIGN(sc->bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    = ctx->core.bitstream_off  - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
+    sc->max_cmdbuf_size          = sc->bitstream_off        - sc->cmdbuf_off;
+    ctx->core.max_bitstream_size = ctx->core.input_map_size - sc->bitstream_off;
 
     err = ff_envideo_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    hw_device_ctx = (AVHWDeviceContext *)sc->hw_device_ref->data;
     device_hwctx  = hw_device_ctx->hwctx;
 
     width_in_mbs = FFALIGN(avctx->coded_width, MB_SIZE) / MB_SIZE;
-    ctx->history_size = width_in_mbs * 0x200;
+    ss->history_size = width_in_mbs * 0x200;
 
-    ctx->prob_data_off = 0;
-    ctx->history_off   = FFALIGN(ctx->prob_data_off + 0x4b00,            ENVIDEO_MAP_ALIGN);
-    common_map_size    = FFALIGN(ctx->history_off   + ctx->history_size, 0x1000);
+    ss->prob_data_off = 0;
+    ss->history_off   = FFALIGN(ss->prob_data_off + 0x4b00,           ENVIDEO_MAP_ALIGN);
+    common_map_size   = FFALIGN(ss->history_off   + ss->history_size, 0x1000);
 
-    err = envideo_map_create(device_hwctx->device, &ctx->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
+    err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
                              EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 
-    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    err = envideo_map_pin(ss->common_map, sc->channel);
     if (err < 0)
         goto fail;
 
-    envideo_vp8_init_probs((uint8_t *)envideo_map_get_cpu_addr(ctx->common_map) + ctx->prob_data_off);
+    envideo_vp8_init_probs((uint8_t *)envideo_map_get_cpu_addr(ss->common_map) + ss->prob_data_off);
 
     return 0;
 
@@ -168,7 +190,7 @@ static void envideo_vp8_prepare_frame_setup(nvdec_vp8_pic_s *setup, VP8Context *
 
         .firstPartSize                    = h->header_partition_size,
 
-        .HistBufferSize                   = ctx->history_size / 256,
+        .HistBufferSize                   = ctx->shared->history_size / 256,
 
         .FrameStride                      = {
             h->framep[VP8_FRAME_CURRENT]->tf.f->linesize[0] / MB_SIZE,
@@ -196,10 +218,12 @@ static void envideo_vp8_prepare_frame_setup(nvdec_vp8_pic_s *setup, VP8Context *
 static int envideo_vp8_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP8Context *h,
                                       EnvideoVP8DecodeContext *ctx, AVFrame *cur_frame)
 {
-    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    EnvideoMap    *input_map = job->input_map;
+    EnvideoVP8DecodeContextShared *ss = ctx->shared;
+    FFEnvideoDecodeContextShared  *sc = ctx->core.shared;
+    FrameDecodeData              *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFEnvideoDecodeFrame          *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                 *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap             *input_map = job->input_map;
 
     int err;
 
@@ -216,12 +240,12 @@ static int envideo_vp8_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP8Context *h,
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVC9B0_SET_PICTURE_INDEX,
                           DRF_NUM(C9B0, _SET_PICTURE_INDEX, _INDEX, ctx->core.frame_idx));
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET, input_map, ctx->core.pic_setup_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,   input_map, ctx->core.bitstream_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,  input_map, ctx->core.status_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET, input_map, sc->pic_setup_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,   input_map, sc->bitstream_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,  input_map, sc->status_off);
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP8_SET_PROB_DATA_OFFSET, ctx->common_map, ctx->prob_data_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_HISTORY_OFFSET,       ctx->common_map, ctx->history_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP8_SET_PROB_DATA_OFFSET, ss->common_map, ss->prob_data_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_HISTORY_OFFSET,       ss->common_map, ss->history_off);
 
 #define PUSH_FRAME(fr, offset) ({                                                               \
     FF_ENVIDEO_PUSH_RELOC_TILED(cmdbuf, NVC9B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,         \
@@ -267,7 +291,7 @@ static int envideo_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     job = (AVEnvideoJob *)tf->operation.job_ref->data;
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    envideo_vp8_prepare_frame_setup((nvdec_vp8_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
+    envideo_vp8_prepare_frame_setup((nvdec_vp8_pic_s *)(mem + ctx->core.shared->pic_setup_off), h, ctx);
 
 #define SAFE_REF(type) (h->framep[(type)] ?: h->framep[VP8_FRAME_CURRENT])
     ctx->golden_frame   = ff_envideo_safe_get_ref(SAFE_REF(VP8_FRAME_GOLDEN)  ->tf.f, frame);
@@ -297,7 +321,7 @@ static int envideo_vp8_end_frame(AVCodecContext *avctx) {
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    setup = (nvdec_vp8_pic_s *)(mem + ctx->core.pic_setup_off);
+    setup = (nvdec_vp8_pic_s *)(mem + ctx->core.shared->pic_setup_off);
     setup->VLDBufferSize = tf->operation.bitstream_len;
 
     err = envideo_vp8_prepare_cmdbuf(job->cmdbuf, h, ctx, frame);
@@ -318,19 +342,32 @@ static int envideo_vp8_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     return ff_envideo_decode_slice(avctx, frame, buf + offset, buf_size - offset, false);
 }
 
+static int envideo_vp8_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
+    EnvideoVP8DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
+    EnvideoVP8DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
+
+    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
+    dst_ctx->golden_frame   = src_ctx->golden_frame;
+    dst_ctx->altref_frame   = src_ctx->altref_frame;
+    dst_ctx->previous_frame = src_ctx->previous_frame;
+
+    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
+}
+
 #if CONFIG_VP8_ENVIDEO_HWACCEL
 const FFHWAccel ff_vp8_envideo_hwaccel = {
-    .p.name         = "vp8_envideo",
-    .p.type         = AVMEDIA_TYPE_VIDEO,
-    .p.id           = AV_CODEC_ID_VP8,
-    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
-    .start_frame    = &envideo_vp8_start_frame,
-    .end_frame      = &envideo_vp8_end_frame,
-    .decode_slice   = &envideo_vp8_decode_slice,
-    .init           = &envideo_vp8_decode_init,
-    .uninit         = &envideo_vp8_decode_uninit,
-    .frame_params   = &ff_envideo_frame_params,
-    .priv_data_size = sizeof(EnvideoVP8DecodeContext),
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name                = "vp8_envideo",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_VP8,
+    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
+    .start_frame           = &envideo_vp8_start_frame,
+    .end_frame             = &envideo_vp8_end_frame,
+    .decode_slice          = &envideo_vp8_decode_slice,
+    .init                  = &envideo_vp8_decode_init,
+    .uninit                = &envideo_vp8_decode_uninit,
+    .frame_params          = &ff_envideo_frame_params,
+    .update_thread_context = &envideo_vp8_update_thread_context,
+    .priv_data_size        = sizeof(EnvideoVP8DecodeContext),
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
 };
 #endif

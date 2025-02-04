@@ -35,12 +35,15 @@
 
 #include "libavutil/pixdesc.h"
 
-typedef struct EnvideoMPEG4DecodeContext {
-    FFEnvideoDecodeContext core;
-
+typedef struct EnvideoMPEG4DecodeContextShared {
     EnvideoMap *common_map;
     uint32_t coloc_off, history_off, scratch_off;
     uint32_t history_size, scratch_size;
+} EnvideoMPEG4DecodeContextShared;
+
+typedef struct EnvideoMPEG4DecodeContext {
+    FFEnvideoDecodeContext core;
+    EnvideoMPEG4DecodeContextShared *shared;
 
     AVFrame *prev_frame, *next_frame;
 } EnvideoMPEG4DecodeContext;
@@ -59,9 +62,7 @@ static int envideo_mpeg4_decode_uninit(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Deinitializing mpeg4-envideo decoder\n");
 
-    err = envideo_map_destroy(ctx->common_map);
-    if (err < 0)
-        return err;
+    av_refstruct_unref(&ctx->shared);
 
     err = ff_envideo_decode_uninit(avctx, &ctx->core);
     if (err < 0)
@@ -70,36 +71,57 @@ static int envideo_mpeg4_decode_uninit(AVCodecContext *avctx) {
     return 0;
 }
 
+static void envideo_mpeg4_shared_free(AVRefStructOpaque opaque, void *obj) {
+    EnvideoMPEG4DecodeContextShared *shared = obj;
+
+    envideo_map_destroy(shared->common_map);
+}
+
 static int envideo_mpeg4_decode_init(AVCodecContext *avctx) {
     EnvideoMPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     AVHWDeviceContext      *hw_device_ctx;
     AVEnvideoDeviceContext *device_hwctx;
+    EnvideoMPEG4DecodeContextShared *ss;
+    FFEnvideoDecodeContextShared *sc;
     uint32_t width_in_mbs, height_in_mbs,
              coloc_size, history_size, scratch_size, common_map_size;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing mpeg4-envideo decoder\n");
 
+    ctx->shared = av_refstruct_alloc_ext(sizeof(*ctx->shared), 0, NULL, envideo_mpeg4_shared_free);
+    if (!ctx->shared) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    err = ff_envideo_alloc_shared(&ctx->core);
+    if (err < 0)
+        goto fail;
+
+    ss = ctx->shared;
+    sc = ctx->core.shared;
+
     /* Ignored: histogram map, size 0x400 */
-    ctx->core.pic_setup_off  = 0;
-    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_mpeg4_pic_s),
+    sc->pic_setup_off        = 0;
+    sc->status_off           = FFALIGN(sc->pic_setup_off + sizeof(nvdec_mpeg4_pic_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
+    sc->cmdbuf_off           = FFALIGN(sc->status_off    + sizeof(nvdec_status_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.bitstream_off  = FFALIGN(ctx->core.cmdbuf_off    + ENVIDEO_MAP_ALIGN,
+    sc->bitstream_off        = FFALIGN(sc->cmdbuf_off    + ENVIDEO_MAP_ALIGN,
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
+    ctx->core.input_map_size = FFALIGN(sc->bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    = ctx->core.bitstream_off  - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
+    sc->max_cmdbuf_size          = sc->bitstream_off        - sc->cmdbuf_off;
+    ctx->core.max_bitstream_size = ctx->core.input_map_size - sc->bitstream_off;
 
     err = ff_envideo_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    hw_device_ctx = (AVHWDeviceContext *)sc->hw_device_ref->data;
     device_hwctx  = hw_device_ctx->hwctx;
 
     width_in_mbs  = FFALIGN(avctx->coded_width,  MB_SIZE) / MB_SIZE;
@@ -108,22 +130,22 @@ static int envideo_mpeg4_decode_init(AVCodecContext *avctx) {
     history_size  = FFALIGN(width_in_mbs * 0x100 + 0x1100, 0x100);
     scratch_size  = 0x400;
 
-    ctx->coloc_off   = 0;
-    ctx->history_off = FFALIGN(ctx->coloc_off   + coloc_size,   ENVIDEO_MAP_ALIGN);
-    ctx->scratch_off = FFALIGN(ctx->history_off + history_size, ENVIDEO_MAP_ALIGN);
-    common_map_size  = FFALIGN(ctx->scratch_off + scratch_size, 0x1000);
+    ss->coloc_off   = 0;
+    ss->history_off = FFALIGN(ss->coloc_off   + coloc_size,   ENVIDEO_MAP_ALIGN);
+    ss->scratch_off = FFALIGN(ss->history_off + history_size, ENVIDEO_MAP_ALIGN);
+    common_map_size = FFALIGN(ss->scratch_off + scratch_size, 0x1000);
 
-    err = envideo_map_create(device_hwctx->device, &ctx->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
+    err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
                              EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 
-    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    err = envideo_map_pin(ss->common_map, sc->channel);
     if (err < 0)
         goto fail;
 
-    ctx->history_size = history_size;
-    ctx->scratch_size = scratch_size;
+    ss->history_size = history_size;
+    ss->scratch_size = scratch_size;
 
     return 0;
 
@@ -141,7 +163,7 @@ static void envideo_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecC
     int i;
 
     *setup = (nvdec_mpeg4_pic_s){
-        .scratch_pic_buffer_size      = ctx->scratch_size,
+        .scratch_pic_buffer_size      = ctx->shared->scratch_size,
 
         .gptimer_timeout_value        = 0, /* Default value */
 
@@ -169,7 +191,7 @@ static void envideo_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecC
         .chroma_bot_offset            = 0,
         .chroma_frame_offset          = 0,
 
-        .HistBufferSize               = ctx->history_size / 256,
+        .HistBufferSize               = ctx->shared->history_size / 256,
 
         .trd                          = { s->pp_time, s->pp_field_time >> 1 },
         .trb                          = { s->pb_time, s->pb_field_time >> 1 },
@@ -200,10 +222,12 @@ static void envideo_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecC
 static int envideo_mpeg4_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MpegEncContext *s, EnvideoMPEG4DecodeContext *ctx,
                                         AVFrame *cur_frame, AVFrame *prev_frame, AVFrame *next_frame)
 {
-    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    EnvideoMap    *input_map = job->input_map;
+    EnvideoMPEG4DecodeContextShared *ss = ctx->shared;
+    FFEnvideoDecodeContextShared    *sc = ctx->core.shared;
+    FrameDecodeData                *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFEnvideoDecodeFrame            *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                   *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap               *input_map = job->input_map;
 
     int err;
 
@@ -220,13 +244,13 @@ static int envideo_mpeg4_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MpegEncContext *s
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVC9B0_SET_PICTURE_INDEX,
                           DRF_NUM(C9B0, _SET_PICTURE_INDEX, _INDEX, ctx->core.frame_idx));
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET, input_map, ctx->core.pic_setup_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,   input_map, ctx->core.bitstream_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,  input_map, ctx->core.status_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET, input_map, sc->pic_setup_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,   input_map, sc->bitstream_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,  input_map, sc->status_off);
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_COLOC_DATA_OFFSET,      ctx->common_map, ctx->coloc_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_HISTORY_OFFSET,         ctx->common_map, ctx->history_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_PIC_SCRATCH_BUF_OFFSET, ctx->common_map, ctx->scratch_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_COLOC_DATA_OFFSET,      ss->common_map, ss->coloc_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_HISTORY_OFFSET,         ss->common_map, ss->history_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_PIC_SCRATCH_BUF_OFFSET, ss->common_map, ss->scratch_off);
 
 #define PUSH_FRAME(fr, offset) ({                                                               \
     FF_ENVIDEO_PUSH_RELOC_TILED(cmdbuf, NVC9B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,         \
@@ -272,7 +296,7 @@ static int envideo_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
     job = (AVEnvideoJob *)tf->operation.job_ref->data;
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    envideo_mpeg4_prepare_frame_setup((nvdec_mpeg4_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
+    envideo_mpeg4_prepare_frame_setup((nvdec_mpeg4_pic_s *)(mem + ctx->core.shared->pic_setup_off), avctx, ctx);
 
     ctx->prev_frame = (s->pict_type != AV_PICTURE_TYPE_I && s->last_pic.ptr) ? s->last_pic.ptr->f : frame;
     ctx->next_frame = (s->pict_type == AV_PICTURE_TYPE_B && s->next_pic.ptr) ? s->next_pic.ptr->f : frame;
@@ -301,7 +325,7 @@ static int envideo_mpeg4_end_frame(AVCodecContext *avctx) {
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    setup = (nvdec_mpeg4_pic_s *)(mem + ctx->core.pic_setup_off);
+    setup = (nvdec_mpeg4_pic_s *)(mem + ctx->core.shared->pic_setup_off);
     setup->stream_len  = tf->operation.bitstream_len + sizeof(bitstream_end_sequence);
     setup->slice_count = tf->operation.num_slices;
 
@@ -327,19 +351,31 @@ static int envideo_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
 }
 
+static int envideo_mpeg4_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
+    EnvideoMPEG4DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
+    EnvideoMPEG4DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
+
+    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
+    dst_ctx->prev_frame = src_ctx->prev_frame;
+    dst_ctx->next_frame = src_ctx->next_frame;
+
+    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
+}
+
 #if CONFIG_MPEG4_ENVIDEO_HWACCEL
 const FFHWAccel ff_mpeg4_envideo_hwaccel = {
-    .p.name         = "mpeg4_envideo",
-    .p.type         = AVMEDIA_TYPE_VIDEO,
-    .p.id           = AV_CODEC_ID_MPEG4,
-    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
-    .start_frame    = &envideo_mpeg4_start_frame,
-    .end_frame      = &envideo_mpeg4_end_frame,
-    .decode_slice   = &envideo_mpeg4_decode_slice,
-    .init           = &envideo_mpeg4_decode_init,
-    .uninit         = &envideo_mpeg4_decode_uninit,
-    .frame_params   = &ff_envideo_frame_params,
-    .priv_data_size = sizeof(EnvideoMPEG4DecodeContext),
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name                = "mpeg4_envideo",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_MPEG4,
+    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
+    .start_frame           = &envideo_mpeg4_start_frame,
+    .end_frame             = &envideo_mpeg4_end_frame,
+    .decode_slice          = &envideo_mpeg4_decode_slice,
+    .init                  = &envideo_mpeg4_decode_init,
+    .uninit                = &envideo_mpeg4_decode_uninit,
+    .frame_params          = &ff_envideo_frame_params,
+    .update_thread_context = &envideo_mpeg4_update_thread_context,
+    .priv_data_size        = sizeof(EnvideoMPEG4DecodeContext),
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
 };
 #endif

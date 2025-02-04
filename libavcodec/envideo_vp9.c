@@ -34,14 +34,16 @@
 
 #include "libavutil/pixdesc.h"
 
-typedef struct EnvideoVP9DecodeContext {
-    FFEnvideoDecodeContext core;
-
-    uint32_t prob_tab_off;
-
+typedef struct EnvideoVP94DecodeContextShared {
     EnvideoMap *common_map;
     uint32_t segment_rw1_off, segment_rw2_off, tile_sizes_off, filter_off,
              col_mvrw1_off, col_mvrw2_off, ctx_counter_off;
+    uint32_t prob_tab_off;
+} EnvideoVP9DecodeContextShared;
+
+typedef struct EnvideoVP9DecodeContext {
+    FFEnvideoDecodeContext core;
+    EnvideoVP9DecodeContextShared *shared;
 
     bool prev_show_frame;
 
@@ -70,9 +72,7 @@ static int envideo_vp9_decode_uninit(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Deinitializing vp9-envideo decoder\n");
 
-    err = envideo_map_destroy(ctx->common_map);
-    if (err < 0)
-        return err;
+    av_refstruct_unref(&ctx->shared);
 
     err = ff_envideo_decode_uninit(avctx, &ctx->core);
     if (err < 0)
@@ -81,11 +81,19 @@ static int envideo_vp9_decode_uninit(AVCodecContext *avctx) {
     return 0;
 }
 
+static void envideo_vp9_shared_free(AVRefStructOpaque opaque, void *obj) {
+    EnvideoVP9DecodeContextShared *shared = obj;
+
+    envideo_map_destroy(shared->common_map);
+}
+
 static int envideo_vp9_decode_init(AVCodecContext *avctx) {
     EnvideoVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     AVHWDeviceContext      *hw_device_ctx;
     AVEnvideoDeviceContext *device_hwctx;
+    EnvideoVP9DecodeContextShared *ss;
+    FFEnvideoDecodeContextShared *sc;
     uint32_t aligned_width, aligned_height, max_sb_size,
              segment_rw_size, filter_size, col_mvrw_size, ctx_counter_size,
              common_map_size;
@@ -94,26 +102,39 @@ static int envideo_vp9_decode_init(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing vp9-envideo decoder\n");
 
-    ctx->core.pic_setup_off  = 0;
-    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_vp9_pic_s),
+    ctx->shared = av_refstruct_alloc_ext(sizeof(*ctx->shared), 0, NULL, envideo_vp9_shared_free);
+    if (!ctx->shared) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    err = ff_envideo_alloc_shared(&ctx->core);
+    if (err < 0)
+        goto fail;
+
+    ss = ctx->shared;
+    sc = ctx->core.shared;
+
+    sc->pic_setup_off        = 0;
+    sc->status_off           = FFALIGN(sc->pic_setup_off + sizeof(nvdec_vp9_pic_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
+    sc->cmdbuf_off           = FFALIGN(sc->status_off    + sizeof(nvdec_status_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->prob_tab_off        = FFALIGN(ctx->core.cmdbuf_off    + 2*ENVIDEO_MAP_ALIGN,
+    ss->prob_tab_off         = FFALIGN(sc->cmdbuf_off    + 2*ENVIDEO_MAP_ALIGN,
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.bitstream_off  = FFALIGN(ctx->prob_tab_off       + sizeof(nvdec_vp9EntropyProbs_t),
+    sc->bitstream_off        = FFALIGN(ss->prob_tab_off  + sizeof(nvdec_vp9EntropyProbs_t),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
+    ctx->core.input_map_size = FFALIGN(sc->bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    = ctx->prob_tab_off        - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
+    sc->max_cmdbuf_size          = ss->prob_tab_off         - sc->cmdbuf_off;
+    ctx->core.max_bitstream_size = ctx->core.input_map_size - sc->bitstream_off;
 
     err = ff_envideo_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    hw_device_ctx = (AVHWDeviceContext *)sc->hw_device_ref->data;
     device_hwctx  = hw_device_ctx->hwctx;
 
     aligned_width    = FFALIGN(avctx->coded_width,  MB_SIZE);
@@ -124,37 +145,37 @@ static int envideo_vp9_decode_init(AVCodecContext *avctx) {
     col_mvrw_size    = max_sb_size * 0x400;
     ctx_counter_size = FFALIGN(sizeof(nvdec_vp9EntropyCounts_t), 0x100);
 
-    ctx->segment_rw1_off = 0;
-    ctx->segment_rw2_off = FFALIGN(ctx->segment_rw1_off + segment_rw_size,  ENVIDEO_MAP_ALIGN);
-    ctx->tile_sizes_off  = FFALIGN(ctx->segment_rw2_off + segment_rw_size,  ENVIDEO_MAP_ALIGN);
-    ctx->filter_off      = FFALIGN(ctx->tile_sizes_off  + 0x700,            ENVIDEO_MAP_ALIGN);
-    ctx->col_mvrw1_off   = FFALIGN(ctx->filter_off      + filter_size,      ENVIDEO_MAP_ALIGN);
-    ctx->col_mvrw2_off   = FFALIGN(ctx->col_mvrw1_off   + col_mvrw_size,    ENVIDEO_MAP_ALIGN);
-    ctx->ctx_counter_off = FFALIGN(ctx->col_mvrw2_off   + col_mvrw_size,    ENVIDEO_MAP_ALIGN);
-    common_map_size      = FFALIGN(ctx->ctx_counter_off + ctx_counter_size, 0x1000);
+    ss->segment_rw1_off = 0;
+    ss->segment_rw2_off = FFALIGN(ss->segment_rw1_off + segment_rw_size,  ENVIDEO_MAP_ALIGN);
+    ss->tile_sizes_off  = FFALIGN(ss->segment_rw2_off + segment_rw_size,  ENVIDEO_MAP_ALIGN);
+    ss->filter_off      = FFALIGN(ss->tile_sizes_off  + 0x700,            ENVIDEO_MAP_ALIGN);
+    ss->col_mvrw1_off   = FFALIGN(ss->filter_off      + filter_size,      ENVIDEO_MAP_ALIGN);
+    ss->col_mvrw2_off   = FFALIGN(ss->col_mvrw1_off   + col_mvrw_size,    ENVIDEO_MAP_ALIGN);
+    ss->ctx_counter_off = FFALIGN(ss->col_mvrw2_off   + col_mvrw_size,    ENVIDEO_MAP_ALIGN);
+    common_map_size     = FFALIGN(ss->ctx_counter_off + ctx_counter_size, 0x1000);
 
-    err = envideo_map_create(device_hwctx->device, &ctx->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
+    err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
                              EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 
-    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    err = envideo_map_pin(ss->common_map, sc->channel);
     if (err < 0)
         goto fail;
 
-    mem = envideo_map_get_cpu_addr(ctx->common_map);
+    mem = envideo_map_get_cpu_addr(ss->common_map);
 
-    memset(mem + ctx->segment_rw1_off, 0, segment_rw_size);
-    memset(mem + ctx->segment_rw2_off, 0, segment_rw_size);
+    memset(mem + ss->segment_rw1_off, 0, segment_rw_size);
+    memset(mem + ss->segment_rw2_off, 0, segment_rw_size);
 
-    memset(mem + ctx->tile_sizes_off, 0, 0x700);
-    ((uint16_t *)(mem + ctx->tile_sizes_off))[0x37a] = 9;
-    ((uint16_t *)(mem + ctx->tile_sizes_off))[0x37b] = 1;
+    memset(mem + ss->tile_sizes_off, 0, 0x700);
+    ((uint16_t *)(mem + ss->tile_sizes_off))[0x37a] = 9;
+    ((uint16_t *)(mem + ss->tile_sizes_off))[0x37b] = 1;
 
-    memset(mem + ctx->col_mvrw1_off, 0, col_mvrw_size);
-    memset(mem + ctx->col_mvrw2_off, 0, col_mvrw_size);
+    memset(mem + ss->col_mvrw1_off, 0, col_mvrw_size);
+    memset(mem + ss->col_mvrw2_off, 0, col_mvrw_size);
 
-    memset(mem + ctx->ctx_counter_off, 0, sizeof(nvdec_vp9EntropyCounts_t));
+    memset(mem + ss->ctx_counter_off, 0, sizeof(nvdec_vp9EntropyCounts_t));
 
     return 0;
 
@@ -465,18 +486,20 @@ static void envideo_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecConte
 static int envideo_vp9_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP9SharedContext *h,
                                       EnvideoVP9DecodeContext *ctx, AVFrame *cur_frame)
 {
-    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    EnvideoMap    *input_map = job->input_map;
+    EnvideoVP9DecodeContextShared *ss = ctx->shared;
+    FFEnvideoDecodeContextShared  *sc = ctx->core.shared;
+    FrameDecodeData              *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFEnvideoDecodeFrame          *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                 *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap             *input_map = job->input_map;
 
     uint32_t col_mvwrite_off, col_mvread_off;
     int err;
 
     if (ctx->core.frame_idx % 2 == 0)
-        col_mvwrite_off = ctx->col_mvrw1_off, col_mvread_off = ctx->col_mvrw2_off;
+        col_mvwrite_off = ss->col_mvrw1_off, col_mvread_off = ss->col_mvrw2_off;
     else
-        col_mvwrite_off = ctx->col_mvrw2_off, col_mvread_off = ctx->col_mvrw1_off;
+        col_mvwrite_off = ss->col_mvrw2_off, col_mvread_off = ss->col_mvrw1_off;
 
     err = envideo_cmdbuf_begin(cmdbuf, EnvideoEngine_Nvdec);
     if (err < 0)
@@ -491,18 +514,18 @@ static int envideo_vp9_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP9SharedContext *h
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVC9B0_SET_PICTURE_INDEX,
                           DRF_NUM(C9B0, _SET_PICTURE_INDEX, _INDEX, ctx->core.frame_idx));
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET, input_map, ctx->core.pic_setup_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,   input_map, ctx->core.bitstream_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,  input_map, ctx->core.status_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET, input_map, sc->pic_setup_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,   input_map, sc->bitstream_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,  input_map, sc->status_off);
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_PROB_TAB_BUF_OFFSET,      input_map,       ctx->prob_tab_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_CTX_COUNTER_BUF_OFFSET,   ctx->common_map, ctx->ctx_counter_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_TILE_SIZE_BUF_OFFSET,     ctx->common_map, ctx->tile_sizes_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_COL_MVWRITE_BUF_OFFSET,   ctx->common_map, col_mvwrite_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_COL_MVREAD_BUF_OFFSET,    ctx->common_map, col_mvread_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_SEGMENT_READ_BUF_OFFSET,  ctx->common_map, ctx->segment_rw1_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_SEGMENT_WRITE_BUF_OFFSET, ctx->common_map, ctx->segment_rw2_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_FILTER_BUFFER_OFFSET,     ctx->common_map, ctx->filter_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_PROB_TAB_BUF_OFFSET,      input_map,      ss->prob_tab_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_CTX_COUNTER_BUF_OFFSET,   ss->common_map, ss->ctx_counter_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_TILE_SIZE_BUF_OFFSET,     ss->common_map, ss->tile_sizes_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_COL_MVWRITE_BUF_OFFSET,   ss->common_map, col_mvwrite_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_COL_MVREAD_BUF_OFFSET,    ss->common_map, col_mvread_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_SEGMENT_READ_BUF_OFFSET,  ss->common_map, ss->segment_rw1_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_SEGMENT_WRITE_BUF_OFFSET, ss->common_map, ss->segment_rw2_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_FILTER_BUFFER_OFFSET,     ss->common_map, ss->filter_off);
 
 #define PUSH_FRAME(fr, offset) ({                                                               \
     FF_ENVIDEO_PUSH_RELOC_TILED(cmdbuf, NVC9B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,         \
@@ -524,17 +547,18 @@ static int envideo_vp9_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP9SharedContext *h
         return err;
 
     if (h->h.segmentation.update_map)
-        FFSWAP(uint32_t, ctx->segment_rw1_off, ctx->segment_rw2_off);
+        FFSWAP(uint32_t, ctx->shared->segment_rw1_off, ctx->shared->segment_rw2_off);
 
     return 0;
 }
 
 static int envideo_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
-    VP9Context                *s = avctx->priv_data;
-    VP9SharedContext          *h = &s->s;
-    AVFrame               *frame = h->frames[CUR_FRAME].tf.f;
-    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
-    EnvideoVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    VP9Context                     *s = avctx->priv_data;
+    VP9SharedContext               *h = &s->s;
+    AVFrame                    *frame = h->frames[CUR_FRAME].tf.f;
+    FrameDecodeData              *fdd = (FrameDecodeData *)frame->private_ref->data;
+    EnvideoVP9DecodeContext      *ctx = avctx->internal->hwaccel_priv_data;
+    EnvideoVP9DecodeContextShared *ss = ctx->shared;
 
     FFEnvideoDecodeFrame *tf;
     AVEnvideoJob *job;
@@ -568,11 +592,11 @@ static int envideo_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
 
     tf  = fdd->hwaccel_priv;
     job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    mem = envideo_map_get_cpu_addr(job->input_map), common_mem = envideo_map_get_cpu_addr(ctx->common_map);
+    mem = envideo_map_get_cpu_addr(job->input_map), common_mem = envideo_map_get_cpu_addr(ss->common_map);
 
-    envideo_vp9_prepare_frame_setup((nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off), avctx, ctx);
-    envideo_vp9_set_tile_sizes((uint16_t *)(common_mem + ctx->tile_sizes_off), s);
-    envideo_vp9_update_probs((nvdec_vp9EntropyProbs_t *)(mem + ctx->prob_tab_off), s, tf->new_input_buffer);
+    envideo_vp9_prepare_frame_setup((nvdec_vp9_pic_s *)(mem + ctx->core.shared->pic_setup_off), avctx, ctx);
+    envideo_vp9_set_tile_sizes((uint16_t *)(common_mem + ss->tile_sizes_off), s);
+    envideo_vp9_update_probs((nvdec_vp9EntropyProbs_t *)(mem + ss->prob_tab_off), s, tf->new_input_buffer);
 
     ctx->refs[0] = ff_envideo_safe_get_ref(h->refs[h->h.refidx[0]].f, h->frames[CUR_FRAME].tf.f);
     ctx->refs[1] = ff_envideo_safe_get_ref(h->refs[h->h.refidx[1]].f, h->frames[CUR_FRAME].tf.f);
@@ -602,7 +626,7 @@ static int envideo_vp9_end_frame(AVCodecContext *avctx) {
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    setup = (nvdec_vp9_pic_s *)(mem + ctx->core.pic_setup_off);
+    setup = (nvdec_vp9_pic_s *)(mem + ctx->core.shared->pic_setup_off);
     setup->stream_len = tf->operation.bitstream_len;
 
     err = envideo_vp9_prepare_cmdbuf(job->cmdbuf, h, ctx, frame);
@@ -623,9 +647,9 @@ static int envideo_vp9_end_frame(AVCodecContext *avctx) {
         if (err < 0)
             return err;
 
-        common_mem = envideo_map_get_cpu_addr(ctx->common_map);
+        common_mem = envideo_map_get_cpu_addr(ctx->shared->common_map);
 
-        envideo_vp9_update_counts((nvdec_vp9EntropyCounts_t *)(common_mem + ctx->ctx_counter_off),
+        envideo_vp9_update_counts((nvdec_vp9EntropyCounts_t *)(common_mem + ctx->shared->ctx_counter_off),
                                   s->td);
         ff_vp9_adapt_probs(s);
     }
@@ -644,19 +668,34 @@ static int envideo_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     return ff_envideo_decode_slice(avctx, frame, buf + offset, buf_size - offset, false);
 }
 
+static int envideo_vp9_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
+    EnvideoVP9DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
+    EnvideoVP9DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
+
+    int i;
+
+    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
+    dst_ctx->prev_show_frame = src_ctx->prev_show_frame;
+    for (i = 0; i < FF_ARRAY_ELEMS(dst_ctx->refs); ++i)
+        dst_ctx->refs[i] = src_ctx->refs[i];
+
+    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
+}
+
 #if CONFIG_VP9_ENVIDEO_HWACCEL
 const FFHWAccel ff_vp9_envideo_hwaccel = {
-    .p.name         = "vp9_envideo",
-    .p.type         = AVMEDIA_TYPE_VIDEO,
-    .p.id           = AV_CODEC_ID_VP9,
-    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
-    .start_frame    = &envideo_vp9_start_frame,
-    .end_frame      = &envideo_vp9_end_frame,
-    .decode_slice   = &envideo_vp9_decode_slice,
-    .init           = &envideo_vp9_decode_init,
-    .uninit         = &envideo_vp9_decode_uninit,
-    .frame_params   = &ff_envideo_frame_params,
-    .priv_data_size = sizeof(EnvideoVP9DecodeContext),
-    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name                = "vp9_envideo",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_VP9,
+    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
+    .start_frame           = &envideo_vp9_start_frame,
+    .end_frame             = &envideo_vp9_end_frame,
+    .decode_slice          = &envideo_vp9_decode_slice,
+    .init                  = &envideo_vp9_decode_init,
+    .uninit                = &envideo_vp9_decode_uninit,
+    .frame_params          = &ff_envideo_frame_params,
+    .update_thread_context = &envideo_vp9_update_thread_context,
+    .priv_data_size        = sizeof(EnvideoVP9DecodeContext),
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
 };
 #endif

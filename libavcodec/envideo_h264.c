@@ -32,6 +32,7 @@
 #include "envideo_decode.h"
 
 #include "libavutil/pixdesc.h"
+#include "libavutil/refstruct.h"
 
 typedef struct EnvideoH264FrameData {
     uint8_t pic_idx;
@@ -39,12 +40,15 @@ typedef struct EnvideoH264FrameData {
     bool pic_initialized, dpb_initialized;
 } EnvideoH264FrameData;
 
-typedef struct EnvideoH264DecodeContext {
-    FFEnvideoDecodeContext core;
-
+typedef struct EnvideoH264DecodeContextShared {
     EnvideoMap *common_map;
     uint32_t coloc_off, mbhist_off, history_off;
     uint32_t mbhist_size, history_size;
+} EnvideoH264DecodeContextShared;
+
+typedef struct EnvideoH264DecodeContext {
+    FFEnvideoDecodeContext core;
+    EnvideoH264DecodeContextShared *shared;
 
     H264Picture *dpb[16], *scratch_ref;
     uint32_t dpb_mask, pic_idx_mask;
@@ -64,15 +68,19 @@ static int envideo_h264_decode_uninit(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Deinitializing h264-envideo decoder\n");
 
-    err = envideo_map_destroy(ctx->common_map);
-    if (err < 0)
-        return err;
+    av_refstruct_unref(&ctx->shared);
 
     err = ff_envideo_decode_uninit(avctx, &ctx->core);
     if (err < 0)
         return err;
 
     return 0;
+}
+
+static void envideo_h264_shared_free(AVRefStructOpaque opaque, void *obj) {
+    EnvideoH264DecodeContextShared *shared = obj;
+
+    envideo_map_destroy(shared->common_map);
 }
 
 static int envideo_h264_decode_init(AVCodecContext *avctx) {
@@ -82,12 +90,27 @@ static int envideo_h264_decode_init(AVCodecContext *avctx) {
 
     AVHWDeviceContext      *hw_device_ctx;
     AVEnvideoDeviceContext *device_hwctx;
+    EnvideoH264DecodeContextShared *ss;
+    FFEnvideoDecodeContextShared *sc;
     uint32_t aligned_width, aligned_height,
              width_in_mbs, height_in_mbs, num_slices,
              coloc_size, mbhist_size, history_size, common_map_size;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing h264-envideo decoder\n");
+
+    ctx->shared = av_refstruct_alloc_ext(sizeof(*ctx->shared), 0, NULL, envideo_h264_shared_free);
+    if (!ctx->shared) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    err = ff_envideo_alloc_shared(&ctx->core);
+    if (err < 0)
+        goto fail;
+
+    ss = ctx->shared;
+    sc = ctx->core.shared;
 
     aligned_width  = FFALIGN(avctx->coded_width,  MB_SIZE);
     aligned_height = FFALIGN(avctx->coded_height, MB_SIZE);
@@ -97,27 +120,27 @@ static int envideo_h264_decode_init(AVCodecContext *avctx) {
     num_slices = width_in_mbs * height_in_mbs;
 
     /* Ignored: histogram map, size 0x400 */
-    ctx->core.pic_setup_off     = 0;
-    ctx->core.status_off        = FFALIGN(ctx->core.pic_setup_off     + sizeof(nvdec_h264_pic_s),
-                                          ENVIDEO_MAP_ALIGN);
-    ctx->core.cmdbuf_off        = FFALIGN(ctx->core.status_off        + sizeof(nvdec_status_s),
-                                          ENVIDEO_MAP_ALIGN);
-    ctx->core.slice_offsets_off = FFALIGN(ctx->core.cmdbuf_off        + 3*ENVIDEO_MAP_ALIGN,
-                                          ENVIDEO_MAP_ALIGN);
-    ctx->core.bitstream_off     = FFALIGN(ctx->core.slice_offsets_off + num_slices * sizeof(uint32_t),
-                                          ENVIDEO_MAP_ALIGN);
-    ctx->core.input_map_size    = FFALIGN(ctx->core.bitstream_off     + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
-                                          0x1000);
+    sc->pic_setup_off        = 0;
+    sc->status_off           = FFALIGN(sc->pic_setup_off     + sizeof(nvdec_h264_pic_s),
+                                       ENVIDEO_MAP_ALIGN);
+    sc->cmdbuf_off           = FFALIGN(sc->status_off        + sizeof(nvdec_status_s),
+                                       ENVIDEO_MAP_ALIGN);
+    sc->slice_offsets_off    = FFALIGN(sc->cmdbuf_off        + 3*ENVIDEO_MAP_ALIGN,
+                                       ENVIDEO_MAP_ALIGN);
+    sc->bitstream_off        = FFALIGN(sc->slice_offsets_off + num_slices * sizeof(uint32_t),
+                                       ENVIDEO_MAP_ALIGN);
+    ctx->core.input_map_size = FFALIGN(sc->bitstream_off     + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
+                                       0x1000);
 
-    ctx->core.max_cmdbuf_size    =  ctx->core.slice_offsets_off - ctx->core.cmdbuf_off;
-    ctx->core.max_num_slices     = (ctx->core.bitstream_off     - ctx->core.slice_offsets_off) / sizeof(uint32_t);
-    ctx->core.max_bitstream_size =  ctx->core.input_map_size    - ctx->core.bitstream_off;
+    sc->max_cmdbuf_size          =  sc->slice_offsets_off    - sc->cmdbuf_off;
+    sc->max_num_slices           = (sc->bitstream_off        - sc->slice_offsets_off) / sizeof(uint32_t);
+    ctx->core.max_bitstream_size =  ctx->core.input_map_size - sc->bitstream_off;
 
     err = ff_envideo_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    hw_device_ctx = (AVHWDeviceContext *)sc->hw_device_ref->data;
     device_hwctx  = hw_device_ctx->hwctx;
 
     coloc_size   = FFALIGN(FFALIGN(height_in_mbs, 2) * (width_in_mbs * 0x40) - 0x3f, 0x100);
@@ -125,22 +148,22 @@ static int envideo_h264_decode_init(AVCodecContext *avctx) {
     mbhist_size  = FFALIGN(width_in_mbs * 0x68, 0x100);
     history_size = FFALIGN(width_in_mbs * 0x200 + 0x1100, 0x200);
 
-    ctx->coloc_off   = 0;
-    ctx->mbhist_off  = FFALIGN(ctx->coloc_off   + coloc_size,   ENVIDEO_MAP_ALIGN);
-    ctx->history_off = FFALIGN(ctx->mbhist_off  + mbhist_size,  ENVIDEO_MAP_ALIGN);
-    common_map_size  = FFALIGN(ctx->history_off + history_size, 0x1000);
+    ss->coloc_off   = 0;
+    ss->mbhist_off  = FFALIGN(ss->coloc_off   + coloc_size,   ENVIDEO_MAP_ALIGN);
+    ss->history_off = FFALIGN(ss->mbhist_off  + mbhist_size,  ENVIDEO_MAP_ALIGN);
+    common_map_size = FFALIGN(ss->history_off + history_size, 0x1000);
 
-    err = envideo_map_create(device_hwctx->device, &ctx->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
+    err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
                              EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 
-    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    err = envideo_map_pin(ss->common_map, sc->channel);
     if (err < 0)
         goto fail;
 
-    ctx->mbhist_size  = mbhist_size;
-    ctx->history_size = history_size;
+    ss->mbhist_size  = mbhist_size;
+    ss->history_size = history_size;
 
     return 0;
 
@@ -201,7 +224,7 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
     int num_refs, max, i, diff;
 
     *setup = (nvdec_h264_pic_s){
-        .mbhist_buffer_size                     = ctx->mbhist_size,
+        .mbhist_buffer_size                     = ctx->shared->mbhist_size,
 
         .gptimer_timeout_value                  = 0, /* Default value */
 
@@ -233,7 +256,7 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         .chroma_bot_offset                      = 0,
         .chroma_frame_offset                    = 0,
 
-        .HistBufferSize                         = ctx->history_size / 256,
+        .HistBufferSize                         = ctx->shared->history_size / 256,
 
         .MbaffFrameFlag                         = sps->mb_aff && !FIELD_PICTURE(h),
         .direct_8x8_inference_flag              = sps->direct_8x8_inference_flag,
@@ -343,10 +366,12 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
 static int envideo_h264_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, H264Context *h,
                                        AVFrame *cur_frame, EnvideoH264DecodeContext *ctx)
 {
-    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    EnvideoMap    *input_map = job->input_map;
+    EnvideoH264DecodeContextShared *ss = ctx->shared;
+    FFEnvideoDecodeContextShared   *sc = ctx->core.shared;
+    FrameDecodeData               *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFEnvideoDecodeFrame           *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                  *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap              *input_map = job->input_map;
 
     H264Picture *refs[16+1];
     EnvideoH264FrameData *fr_priv;
@@ -365,14 +390,14 @@ static int envideo_h264_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, H264Context *h,
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVC9B0_SET_PICTURE_INDEX,
                           DRF_NUM(C9B0, _SET_PICTURE_INDEX, _INDEX, ctx->core.frame_idx));
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET,     input_map, ctx->core.pic_setup_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,       input_map, ctx->core.bitstream_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_SLICE_OFFSETS_BUF_OFFSET, input_map, ctx->core.slice_offsets_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,      input_map, ctx->core.status_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET,     input_map, sc->pic_setup_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,       input_map, sc->bitstream_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_SLICE_OFFSETS_BUF_OFFSET, input_map, sc->slice_offsets_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,      input_map, sc->status_off);
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_COLOC_DATA_OFFSET,      ctx->common_map, ctx->coloc_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_H264_SET_MBHIST_BUF_OFFSET, ctx->common_map, ctx->mbhist_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_HISTORY_OFFSET,         ctx->common_map, ctx->history_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_COLOC_DATA_OFFSET,      ss->common_map, ss->coloc_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_H264_SET_MBHIST_BUF_OFFSET, ss->common_map, ss->mbhist_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_HISTORY_OFFSET,         ss->common_map, ss->history_off);
 
     /* Build list of references sorted by picture idx */
     for (i = 0; i < FF_ARRAY_ELEMS(refs); ++i)
@@ -433,7 +458,7 @@ static int envideo_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     memset(ctx->dpb, 0, sizeof(ctx->dpb));
     ctx->dpb_mask = ctx->pic_idx_mask = 0;
 
-    envideo_h264_prepare_frame_setup((nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off), h, ctx);
+    envideo_h264_prepare_frame_setup((nvdec_h264_pic_s *)(mem + ctx->core.shared->pic_setup_off), h, ctx);
 
     return 0;
 }
@@ -458,7 +483,7 @@ static int envideo_h264_end_frame(AVCodecContext *avctx) {
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    setup = (nvdec_h264_pic_s *)(mem + ctx->core.pic_setup_off);
+    setup = (nvdec_h264_pic_s *)(mem + ctx->core.shared->pic_setup_off);
     setup->stream_len  = tf->operation.bitstream_len + sizeof(bitstream_end_sequence);
     setup->slice_count = tf->operation.num_slices;
 
@@ -479,20 +504,34 @@ static int envideo_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, true);
 }
 
+static int envideo_h264_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
+    EnvideoH264DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
+    EnvideoH264DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
+
+    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
+    memcpy(dst_ctx->dpb, src_ctx->dpb, sizeof(dst_ctx->dpb));
+    dst_ctx->scratch_ref  = src_ctx->scratch_ref;
+    dst_ctx->dpb_mask     = src_ctx->dpb_mask;
+    dst_ctx->pic_idx_mask = src_ctx->pic_idx_mask;
+
+    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
+}
+
 #if CONFIG_H264_ENVIDEO_HWACCEL
 const FFHWAccel ff_h264_envideo_hwaccel = {
-    .p.name               = "h264_envideo",
-    .p.type               = AVMEDIA_TYPE_VIDEO,
-    .p.id                 = AV_CODEC_ID_H264,
-    .p.pix_fmt            = AV_PIX_FMT_ENVIDEO,
-    .start_frame          = &envideo_h264_start_frame,
-    .end_frame            = &envideo_h264_end_frame,
-    .decode_slice         = &envideo_h264_decode_slice,
-    .init                 = &envideo_h264_decode_init,
-    .uninit               = &envideo_h264_decode_uninit,
-    .frame_params         = &ff_envideo_frame_params,
-    .frame_priv_data_size = sizeof(EnvideoH264FrameData),
-    .priv_data_size       = sizeof(EnvideoH264DecodeContext),
-    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name                = "h264_envideo",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_H264,
+    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
+    .start_frame           = &envideo_h264_start_frame,
+    .end_frame             = &envideo_h264_end_frame,
+    .decode_slice          = &envideo_h264_decode_slice,
+    .init                  = &envideo_h264_decode_init,
+    .uninit                = &envideo_h264_decode_uninit,
+    .frame_params          = &ff_envideo_frame_params,
+    .update_thread_context = &envideo_h264_update_thread_context,
+    .frame_priv_data_size  = sizeof(EnvideoH264FrameData),
+    .priv_data_size        = sizeof(EnvideoH264DecodeContext),
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
 };
 #endif

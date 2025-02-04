@@ -39,14 +39,17 @@ typedef struct EnvideoHEVCFrameData {
     uint8_t dpb_idx;
 } EnvideoHEVCFrameData;
 
-typedef struct EnvideoHEVCDecodeContext {
-    FFEnvideoDecodeContext core;
-
+typedef struct EnvideoHEVCDecodeContextShared {
     EnvideoMap *common_map;
     uint32_t tile_sizes_off, scaling_list_off,
              coloc_off, filter_off;
+    uint32_t colmv_size, sao_offset, bsd_offset;
+} EnvideoHEVCDecodeContextShared;
 
-    unsigned int colmv_size, sao_offset, bsd_offset;
+typedef struct EnvideoHEVCDecodeContext {
+    FFEnvideoDecodeContext core;
+    EnvideoHEVCDecodeContextShared *shared;
+
     uint8_t pattern_id;
 
     HEVCFrame *refs[16], *scratch_ref;
@@ -70,9 +73,7 @@ static int envideo_hevc_decode_uninit(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Deinitializing hevc-envideo decoder\n");
 
-    err = envideo_map_destroy(ctx->common_map);
-    if (err < 0)
-        return err;
+    av_refstruct_unref(&ctx->shared);
 
     err = ff_envideo_decode_uninit(avctx, &ctx->core);
     if (err < 0)
@@ -81,39 +82,60 @@ static int envideo_hevc_decode_uninit(AVCodecContext *avctx) {
     return 0;
 }
 
+static void envideo_hevc_shared_free(AVRefStructOpaque opaque, void *obj) {
+    EnvideoHEVCDecodeContextShared *shared = obj;
+
+    envideo_map_destroy(shared->common_map);
+}
+
 static int envideo_hevc_decode_init(AVCodecContext *avctx) {
     EnvideoHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     AVHWDeviceContext      *hw_device_ctx;
     AVEnvideoDeviceContext *device_hwctx;
+    EnvideoHEVCDecodeContextShared *ss;
+    FFEnvideoDecodeContextShared *sc;
     uint32_t aligned_width, aligned_height,
              coloc_size, filter_buffer_size, common_map_size;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing hevc-envideo decoder\n");
 
-    ctx->core.pic_setup_off  = 0;
-    ctx->core.status_off     = FFALIGN(ctx->core.pic_setup_off + sizeof(nvdec_hevc_pic_s),
+    ctx->shared = av_refstruct_alloc_ext(sizeof(*ctx->shared), 0, NULL, envideo_hevc_shared_free);
+    if (!ctx->shared) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    err = ff_envideo_alloc_shared(&ctx->core);
+    if (err < 0)
+        goto fail;
+
+    ss = ctx->shared;
+    sc = ctx->core.shared;
+
+    sc->pic_setup_off        = 0;
+    sc->status_off           = FFALIGN(sc->pic_setup_off    + sizeof(nvdec_hevc_pic_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.cmdbuf_off     = FFALIGN(ctx->core.status_off    + sizeof(nvdec_status_s),
+    sc->cmdbuf_off           = FFALIGN(sc->status_off       + sizeof(nvdec_status_s),
                                        ENVIDEO_MAP_ALIGN);
-    ctx->tile_sizes_off      = FFALIGN(ctx->core.cmdbuf_off    + 3*ENVIDEO_MAP_ALIGN,
+    ss->tile_sizes_off       = FFALIGN(sc->cmdbuf_off       + 3*ENVIDEO_MAP_ALIGN,
                                        ENVIDEO_MAP_ALIGN);
-    ctx->scaling_list_off    = FFALIGN(ctx->tile_sizes_off     + 0x900,
+    ss->scaling_list_off     = FFALIGN(ss->tile_sizes_off   + 0x900,
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.bitstream_off  = FFALIGN(ctx->scaling_list_off   + 0x400,
+    sc->bitstream_off        = FFALIGN(ss->scaling_list_off + 0x400,
                                        ENVIDEO_MAP_ALIGN);
-    ctx->core.input_map_size = FFALIGN(ctx->core.bitstream_off + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
+    ctx->core.input_map_size = FFALIGN(sc->bitstream_off    + ff_envideo_decode_pick_bitstream_buffer_size(avctx),
                                        0x1000);
 
-    ctx->core.max_cmdbuf_size    = ctx->tile_sizes_off      - ctx->core.cmdbuf_off;
-    ctx->core.max_bitstream_size = ctx->core.input_map_size - ctx->core.bitstream_off;
+    sc->max_cmdbuf_size          = ss->tile_sizes_off       - sc->cmdbuf_off;
+    ctx->core.max_bitstream_size = ctx->core.input_map_size - sc->bitstream_off;
 
     err = ff_envideo_decode_init(avctx, &ctx->core);
     if (err < 0)
         goto fail;
 
-    hw_device_ctx = (AVHWDeviceContext *)ctx->core.hw_device_ref->data;
+    hw_device_ctx = (AVHWDeviceContext *)sc->hw_device_ref->data;
     device_hwctx  = hw_device_ctx->hwctx;
 
     aligned_width      = FFALIGN(avctx->coded_width,  CTU_SIZE);
@@ -121,22 +143,22 @@ static int envideo_hevc_decode_init(AVCodecContext *avctx) {
     coloc_size         = (aligned_width * aligned_height) + (aligned_width * aligned_height / MB_SIZE);
     filter_buffer_size = (FILTER_SIZE + SAO_SIZE + BSD_SIZE) * aligned_height;
 
-    ctx->coloc_off  = 0;
-    ctx->filter_off = FFALIGN(ctx->coloc_off  + coloc_size,         ENVIDEO_MAP_ALIGN);
-    common_map_size = FFALIGN(ctx->filter_off + filter_buffer_size, 0x1000);
+    ss->coloc_off   = 0;
+    ss->filter_off  = FFALIGN(ss->coloc_off  + coloc_size,         ENVIDEO_MAP_ALIGN);
+    common_map_size = FFALIGN(ss->filter_off + filter_buffer_size, 0x1000);
 
-    err = envideo_map_create(device_hwctx->device, &ctx->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
+    err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
                              EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 
-    err = envideo_map_pin(ctx->common_map, ctx->core.channel);
+    err = envideo_map_pin(ss->common_map, sc->channel);
     if (err < 0)
         goto fail;
 
-    ctx->colmv_size = aligned_width * aligned_height / 16;
-    ctx->sao_offset =  FILTER_SIZE             * aligned_height;
-    ctx->bsd_offset = (FILTER_SIZE + SAO_SIZE) * aligned_height;
+    ss->colmv_size = aligned_width * aligned_height / 16;
+    ss->sao_offset =  FILTER_SIZE             * aligned_height;
+    ss->bsd_offset = (FILTER_SIZE + SAO_SIZE) * aligned_height;
 
     return 0;
 
@@ -319,9 +341,9 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
             s->cur_frame->f->linesize[1] / ((output_mode == 1) ? 2 : 1),
         },
 
-        .colMvBuffersize                             = ctx->colmv_size / 256,
-        .HevcSaoBufferOffset                         = ctx->sao_offset / 256,
-        .HevcBsdCtrlOffset                           = ctx->bsd_offset / 256,
+        .colMvBuffersize                             = ctx->shared->colmv_size / 256,
+        .HevcSaoBufferOffset                         = ctx->shared->sao_offset / 256,
+        .HevcBsdCtrlOffset                           = ctx->shared->bsd_offset / 256,
 
         .pic_width_in_luma_samples                   = sps->width,
         .pic_height_in_luma_samples                  = sps->height,
@@ -500,9 +522,9 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     ctx->pattern_id ^= 1;
 
     if (sps->scaling_list_enabled)
-        envideo_hevc_set_scaling_list((nvdec_hevc_scaling_list_s *)(mem + ctx->scaling_list_off), s);
+        envideo_hevc_set_scaling_list((nvdec_hevc_scaling_list_s *)(mem + ctx->shared->scaling_list_off), s);
 
-    tile_sizes = (uint16_t *)(mem + ctx->tile_sizes_off);
+    tile_sizes = (uint16_t *)(mem + ctx->shared->tile_sizes_off);
     if (pps->tiles_enabled_flag) {
         envideo_hevc_set_tile_sizes(tile_sizes, s);
     } else {
@@ -514,10 +536,12 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
 static int envideo_hevc_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, HEVCContext *s,
                                        EnvideoHEVCDecodeContext *ctx, AVFrame *cur_frame)
 {
-    FrameDecodeData     *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame *tf = fdd->hwaccel_priv;
-    AVEnvideoJob        *job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    EnvideoMap    *input_map = job->input_map;
+    EnvideoHEVCDecodeContextShared *ss = ctx->shared;
+    FFEnvideoDecodeContextShared   *sc = ctx->core.shared;
+    FrameDecodeData               *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
+    FFEnvideoDecodeFrame           *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                  *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoMap              *input_map = job->input_map;
 
     int i;
     int err;
@@ -535,14 +559,14 @@ static int envideo_hevc_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, HEVCContext *s,
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVC9B0_SET_PICTURE_INDEX,
                           DRF_NUM(C9B0, _SET_PICTURE_INDEX, _INDEX, ctx->core.frame_idx));
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET, input_map, ctx->core.pic_setup_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,   input_map, ctx->core.bitstream_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,  input_map, ctx->core.status_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_DRV_PIC_SETUP_OFFSET, input_map, sc->pic_setup_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_IN_BUF_BASE_OFFSET,   input_map, sc->bitstream_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_NVDEC_STATUS_OFFSET,  input_map, sc->status_off);
 
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_HEVC_SET_SCALING_LIST_OFFSET,  input_map,       ctx->scaling_list_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_HEVC_SET_TILE_SIZES_OFFSET,    input_map,       ctx->tile_sizes_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_HEVC_SET_FILTER_BUFFER_OFFSET, ctx->common_map, ctx->filter_off);
-    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_COLOC_DATA_OFFSET,         ctx->common_map, ctx->coloc_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_HEVC_SET_SCALING_LIST_OFFSET,  input_map,      ss->scaling_list_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_HEVC_SET_TILE_SIZES_OFFSET,    input_map,      ss->tile_sizes_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_HEVC_SET_FILTER_BUFFER_OFFSET, ss->common_map, ss->filter_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_COLOC_DATA_OFFSET,         ss->common_map, ss->coloc_off);
 
 #define PUSH_FRAME(fr, offset) ({                                                               \
     FF_ENVIDEO_PUSH_RELOC_TILED(cmdbuf, NVC9B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,         \
@@ -595,7 +619,7 @@ static int envideo_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     job = (AVEnvideoJob *)tf->operation.job_ref->data;
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    envideo_hevc_prepare_frame_setup((nvdec_hevc_pic_s *)(mem + ctx->core.pic_setup_off),
+    envideo_hevc_prepare_frame_setup((nvdec_hevc_pic_s *)(mem + ctx->core.shared->pic_setup_off),
                                      avctx, frame, ctx);
 
     return 0;
@@ -621,7 +645,7 @@ static int envideo_hevc_end_frame(AVCodecContext *avctx) {
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    setup = (nvdec_hevc_pic_s *)(mem + ctx->core.pic_setup_off);
+    setup = (nvdec_hevc_pic_s *)(mem + ctx->core.shared->pic_setup_off);
     setup->stream_len = tf->operation.bitstream_len;
 
     err = envideo_hevc_prepare_cmdbuf(job->cmdbuf, s, ctx, frame);
@@ -634,12 +658,13 @@ static int envideo_hevc_end_frame(AVCodecContext *avctx) {
 static int envideo_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
                                      uint32_t buf_size)
 {
-    HEVCContext                *s = avctx->priv_data;
-    AVFrame                *frame = s->cur_frame->f;
-    FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame      *tf = fdd->hwaccel_priv;
-    AVEnvideoJob             *job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    EnvideoHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
+    HEVCContext                   *s = avctx->priv_data;
+    AVFrame                   *frame = s->cur_frame->f;
+    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
+    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    EnvideoHEVCDecodeContext    *ctx = avctx->internal->hwaccel_priv_data;
+    FFEnvideoDecodeContextShared *sc = ctx->core.shared;
 
     uint8_t *mem;
 
@@ -649,26 +674,40 @@ static int envideo_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
      * Official code adds a 4-byte 00000001 startcode,
      * though decoding was observed to work without it
      */
-    AV_WB8(mem + ctx->core.bitstream_off + tf->operation.bitstream_len, 0);
+    AV_WB8(mem + sc->bitstream_off + tf->operation.bitstream_len, 0);
     tf->operation.bitstream_len += 1;
 
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, AV_RB24(buf) != 1);
 }
 
+static int envideo_hevc_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
+    EnvideoHEVCDecodeContext *src_ctx = src->internal->hwaccel_priv_data;
+    EnvideoHEVCDecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
+
+    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
+    memcpy(dst_ctx->refs, src_ctx->refs, sizeof(dst_ctx->refs));
+    dst_ctx->scratch_ref = src_ctx->scratch_ref;
+    dst_ctx->refs_mask   = src_ctx->refs_mask;
+    dst_ctx->pattern_id  = src_ctx->pattern_id;
+
+    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
+}
+
 #if CONFIG_HEVC_ENVIDEO_HWACCEL
 const FFHWAccel ff_hevc_envideo_hwaccel = {
-    .p.name               = "hevc_envideo",
-    .p.type               = AVMEDIA_TYPE_VIDEO,
-    .p.id                 = AV_CODEC_ID_HEVC,
-    .p.pix_fmt            = AV_PIX_FMT_ENVIDEO,
-    .start_frame          = &envideo_hevc_start_frame,
-    .end_frame            = &envideo_hevc_end_frame,
-    .decode_slice         = &envideo_hevc_decode_slice,
-    .init                 = &envideo_hevc_decode_init,
-    .uninit               = &envideo_hevc_decode_uninit,
-    .frame_params         = &ff_envideo_frame_params,
-    .frame_priv_data_size = sizeof(EnvideoHEVCFrameData),
-    .priv_data_size       = sizeof(EnvideoHEVCDecodeContext),
-    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
+    .p.name                = "hevc_envideo",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_HEVC,
+    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
+    .start_frame           = &envideo_hevc_start_frame,
+    .end_frame             = &envideo_hevc_end_frame,
+    .decode_slice          = &envideo_hevc_decode_slice,
+    .init                  = &envideo_hevc_decode_init,
+    .uninit                = &envideo_hevc_decode_uninit,
+    .frame_params          = &ff_envideo_frame_params,
+    .update_thread_context = &envideo_hevc_update_thread_context,
+    .frame_priv_data_size  = sizeof(EnvideoHEVCFrameData),
+    .priv_data_size        = sizeof(EnvideoHEVCDecodeContext),
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
 };
 #endif

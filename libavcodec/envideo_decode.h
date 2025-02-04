@@ -49,21 +49,27 @@ typedef struct FFEnvideoDecodeFrame {
     bool in_flight, new_input_buffer;
 } FFEnvideoDecodeFrame;
 
-typedef struct FFEnvideoDecodeContext {
-    uint64_t frame_idx;
-
+typedef struct FFEnvideoDecodeContextShared {
     AVBufferRef *hw_device_ref;
     AVEnvideoJobPool pool;
-    FFEnvideoOperation *operations;
-    size_t num_operations;
 
     bool is_nvjpg;
     EnvideoChannel *channel;
 
     uint32_t pic_setup_off, status_off, cmdbuf_off,
              bitstream_off, slice_offsets_off;
-    uint32_t input_map_size;
-    uint32_t max_cmdbuf_size, max_bitstream_size, max_num_slices;
+    uint32_t max_cmdbuf_size, max_num_slices;
+} FFEnvideoDecodeContextShared;
+
+typedef struct FFEnvideoDecodeContext {
+    FFEnvideoDecodeContextShared *shared;
+
+    uint64_t frame_idx;
+    uint32_t input_map_size, max_bitstream_size;
+
+    // Thread-local variables
+    FFEnvideoOperation *operations;
+    size_t num_operations;
 } FFEnvideoDecodeContext;
 
 #define FF_ENVIDEO_PUSH_VALUE(cmdbuf, off, val) ({                      \
@@ -100,6 +106,7 @@ static inline AVFrame *ff_envideo_safe_get_ref(AVFrame *ref, AVFrame *fallback) 
     return (ref && ref->private_ref) ? ref : fallback;
 }
 
+int ff_envideo_alloc_shared(FFEnvideoDecodeContext *ctx);
 int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx);
 int ff_envideo_decode_uninit(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx);
 int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeContext *ctx);
@@ -107,6 +114,7 @@ int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
                             const uint8_t *buf, uint32_t buf_size, bool add_startcode);
 int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeContext *ctx,
                          const uint8_t *end_sequence, int end_sequence_size);
+int ff_envideo_update_thread_context(FFEnvideoDecodeContext *dst, const FFEnvideoDecodeContext *src);
 
 int ff_envideo_wait_decode(void *logctx, AVFrame *frame);
 

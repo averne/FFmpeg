@@ -305,7 +305,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
             goto fail;
     }
 
-    /* Find the corresponding map object and its offset for each plane  */
+    /* Find the corresponding map object and its offset for each plane */
     for (i = 0; i < num_planes; ++i) {
         for (j = 0; j < FF_ARRAY_ELEMS(swframe->buf); ++j) {
             if ((swframe->buf[j]->data <= swframe->data[i]) &&
@@ -368,9 +368,6 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
         goto fail;
 
     err = envideo_fence_wait(hwctx->device, enframe->fence, UINT64_MAX);
-    if (err)
-        goto fail;
-
 
 fail:
     av_buffer_unref(&job_ref);
