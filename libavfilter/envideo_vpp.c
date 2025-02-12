@@ -1,0 +1,302 @@
+/*
+ * Copyright (c) 2025 averne <averne381@gmail.com>
+ *
+ * This file is part of FFmpeg.
+ *
+ * FFmpeg is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * FFmpeg is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with FFmpeg; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
+
+#include "libavutil/pixdesc.h"
+
+#include "filters.h"
+
+#include "envideo_vpp.h"
+
+static int envideo_pixfmt_to_vic(enum AVPixelFormat fmt) {
+    switch (fmt) {
+        case AV_PIX_FMT_GRAY8:
+            return NVB0B6_T_L8;
+        case AV_PIX_FMT_NV12:
+            return NVB0B6_T_Y8___U8V8_N420;
+        case AV_PIX_FMT_YUV420P:
+            return NVB0B6_T_Y8___U8___V8_N420;
+        case AV_PIX_FMT_RGB565:
+            return NVB0B6_T_R5G6B5;
+        case AV_PIX_FMT_RGB32:
+            return NVB0B6_T_A8R8G8B8;
+        case AV_PIX_FMT_BGR32:
+            return NVB0B6_T_A8B8G8R8;
+        case AV_PIX_FMT_RGB32_1:
+            return NVB0B6_T_R8G8B8A8;
+        case AV_PIX_FMT_BGR32_1:
+            return NVB0B6_T_B8G8R8A8;
+        case AV_PIX_FMT_0RGB32:
+            return NVB0B6_T_X8R8G8B8;
+        case AV_PIX_FMT_0BGR32:
+            return NVB0B6_T_X8B8G8R8;
+        default:
+            return -1;
+    }
+}
+
+int ff_envideo_vpp_ctx_init(AVFilterContext *avctx) {
+    FFEnvideoVppContext *ctx = avctx->priv;
+
+    if (!ctx->vic_map_size) {
+        ctx->vic_setup_off  = 0;
+        ctx->vic_cmdbuf_off = FFALIGN(ctx->vic_setup_off  + sizeof(VicConfigStruct),
+                                      ENVIDEO_MAP_ALIGN);
+        ctx->vic_map_size   = FFALIGN(ctx->vic_cmdbuf_off + ENVIDEO_MAP_ALIGN,
+                                      0x1000);
+
+        ctx->max_cmdbuf_size = ctx->vic_map_size - ctx->vic_cmdbuf_off;
+    }
+
+    return 0;
+}
+
+void ff_envideo_vpp_ctx_uninit(AVFilterContext *avctx) {
+    FFEnvideoVppContext *ctx = avctx->priv;
+
+    AVEnvideoDeviceContext *device_ctx;
+    FFEnvideoOperation *op;
+    int i;
+
+    if (ctx->hw_device_ref) {
+        device_ctx = ((AVHWDeviceContext *)ctx->hw_device_ref->data)->hwctx;
+
+        for (i = 0; i < ctx->num_operations; ++i) {
+            op  = &ctx->operations[i];
+            envideo_fence_wait(device_ctx->device, op->fence, UINT64_MAX);
+            av_buffer_unref(&op->job_ref);
+        }
+    }
+
+    av_freep(&ctx->operations);
+    ctx->num_operations = 0;
+
+    av_envideo_job_pool_uninit(&ctx->pool);
+
+    envideo_channel_destroy(ctx->channel);
+
+    av_buffer_unref(&ctx->hw_device_ref);
+}
+
+int ff_envideo_vpp_config_input(AVFilterLink *inlink) {
+    FilterLink            *l = ff_filter_link(inlink);
+    AVFilterContext   *avctx = inlink->dst;
+    FFEnvideoVppContext *ctx = avctx->priv;
+
+    AVHWFramesContext *input_frames_ctx;
+    AVEnvideoDeviceContext *device_ctx;
+    const AVPixFmtDescriptor *desc;
+    int i, err;
+
+    if (!l->hw_frames_ctx) {
+        av_log(avctx, AV_LOG_ERROR, "No hardware frame context provided on input\n");
+        return AVERROR(EINVAL);
+    }
+
+    input_frames_ctx = (AVHWFramesContext *)l->hw_frames_ctx->data;
+    if (input_frames_ctx->format != AV_PIX_FMT_ENVIDEO) {
+        err = AVERROR(EINVAL);
+        goto fail;
+    }
+
+    desc = av_pix_fmt_desc_get(input_frames_ctx->sw_format);
+    for (i = 0; i < desc->nb_components; ++i) {
+        if (desc->comp[i].depth > 8) {
+            av_log(avctx, AV_LOG_ERROR, "Color depth %d > 8 for component %d of format %s unsupported\n",
+                   desc->comp[i].depth, i, desc->name);
+            err = AVERROR(EINVAL);
+            goto fail;
+        }
+    }
+
+    ctx->input_format  = input_frames_ctx->sw_format;
+    ctx->output_format = input_frames_ctx->sw_format;
+    ctx->output_width  = inlink->w;
+    ctx->output_height = inlink->h;
+
+    if (!input_frames_ctx->device_ref) {
+        av_log(avctx, AV_LOG_ERROR, "No hardware context provided on input\n");
+        err = AVERROR(EINVAL);
+        goto fail;
+    }
+
+    ctx->hw_device_ref = av_buffer_ref(input_frames_ctx->device_ref);
+    if (!ctx->hw_device_ref) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    device_ctx = ((AVHWDeviceContext *)ctx->hw_device_ref->data)->hwctx;
+
+    err = envideo_channel_create(device_ctx->device, &ctx->channel, EnvideoEngine_Vic);
+    if (err < 0)
+        goto fail;
+
+    err = av_envideo_job_pool_init(&ctx->pool, device_ctx->device, ctx->channel,
+                                   ctx->vic_map_size, ENVIDEO_MAP_ALIGN,
+                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable | EnvideoMap_UsageCmdbuf,
+                                   ctx->vic_cmdbuf_off, ctx->max_cmdbuf_size);
+
+    return 0;
+
+fail:
+    ff_envideo_vpp_ctx_uninit(avctx);
+    return err;
+}
+
+int ff_envideo_vpp_config_output(AVFilterLink *outlink) {
+    AVFilterLink     *inlink = outlink->src->inputs[0];
+    FilterLink          *inl = ff_filter_link(inlink);
+    FilterLink         *outl = ff_filter_link(outlink);
+    AVFilterContext   *avctx = outlink->src;
+    FFEnvideoVppContext *ctx = avctx->priv;
+
+    AVBufferRef *device_ref;
+    AVHWFramesContext *input_hwframes_ctx, *output_hwframes_ctx;
+    int err;
+
+    av_buffer_unref(&outl->hw_frames_ctx);
+
+    input_hwframes_ctx = (AVHWFramesContext *)inl->hw_frames_ctx->data;
+
+    outlink->w = ctx->output_width;
+    outlink->h = ctx->output_height;
+
+    /* Attempt to reuse the input hardware frame context */
+    if ((input_hwframes_ctx->sw_format == ctx->output_format) &&
+        (input_hwframes_ctx->width     == ctx->output_width ) &&
+        (input_hwframes_ctx->height    == ctx->output_height))
+    {
+        outl->hw_frames_ctx = av_buffer_ref(inl->hw_frames_ctx);
+        if (!outl->hw_frames_ctx)
+            return AVERROR(ENOMEM);
+    } else {
+        device_ref = avctx->hw_device_ctx ?: input_hwframes_ctx->device_ref;
+
+        outl->hw_frames_ctx = av_hwframe_ctx_alloc(device_ref);
+        if (!outl->hw_frames_ctx)
+            return AVERROR(ENOMEM);
+
+        output_hwframes_ctx = (AVHWFramesContext *)outl->hw_frames_ctx->data;
+
+        output_hwframes_ctx->format    = AV_PIX_FMT_ENVIDEO;
+        output_hwframes_ctx->sw_format = ctx->output_format;
+        output_hwframes_ctx->width     = outlink->w;
+        output_hwframes_ctx->height    = outlink->h;
+
+        err = av_hwframe_ctx_init(outl->hw_frames_ctx);
+        if (err < 0) {
+            av_buffer_unref(&outl->hw_frames_ctx);
+            return err;
+        }
+    }
+
+    return 0;
+}
+
+int ff_envideo_vpp_init_config(FFEnvideoVppContext *ctx, VicConfigStruct *config, AVFrame *output,
+                               AVFrame **input, int num_input_frames)
+{
+    const AVPixFmtDescriptor *input_desc, *output_desc;
+    AVEnvideoFrame *input_frame, *output_frame;
+    int i;
+
+    output_desc  = av_pix_fmt_desc_get(ctx->output_format);
+    output_frame = (AVEnvideoFrame *)output->buf[0]->data;
+
+    *config = (VicConfigStruct){
+        .pipeConfig = {
+            .DownsampleHoriz            = 1 << 2, /* U9.2 */
+            .DownsampleVert             = 1 << 2, /* U9.2 */
+        },
+        .outputConfig = {
+            .AlphaFillMode              = NVB0B6_DXVAHD_ALPHA_FILL_MODE_OPAQUE,
+            .BackgroundAlpha            = 0,
+            .BackgroundR                = 0,
+            .BackgroundG                = 0,
+            .BackgroundB                = 0,
+            .TargetRectLeft             = 0,
+            .TargetRectRight            = output->width  - 1,
+            .TargetRectTop              = 0,
+            .TargetRectBottom           = output->height - 1,
+        },
+        .outputSurfaceConfig = {
+            .OutPixelFormat             = envideo_pixfmt_to_vic(ctx->output_format),
+            .OutSurfaceWidth            = output->width  - 1,
+            .OutSurfaceHeight           = output->height - 1,
+            .OutBlkKind                 = !output_frame->is_pitch ? NVB0B6_BLK_KIND_GENERIC_16Bx2 : NVB0B6_BLK_KIND_PITCH,
+            .OutBlkHeight               = !output_frame->is_pitch ? 1 : 0, /* GOB height 2 */
+            .OutLumaWidth               = (output->linesize[0] / output_desc->comp[0].step) - 1,
+            .OutLumaHeight              = FFALIGN(output->height, !output_frame->is_pitch ? 32 : 2) - 1,
+            .OutChromaWidth             = (output_desc->flags & AV_PIX_FMT_FLAG_RGB) ?
+                                          -1 : (output->linesize[1] / output_desc->comp[1].step) - 1,
+            .OutChromaHeight            = (output_desc->flags & AV_PIX_FMT_FLAG_RGB) ? -1 :
+                                          (FFALIGN(output->height, !output_frame->is_pitch ? 32 : 2) >> output_desc->log2_chroma_h) - 1,
+        },
+    };
+
+    for (i = 0; i < num_input_frames; ++i) {
+        input_desc  = av_pix_fmt_desc_get(ctx->output_format);
+        input_frame = (AVEnvideoFrame *)input[i]->buf[0]->data;
+
+        config->slotStruct[i] = (VicSlotStruct){
+            .slotConfig = {
+                .SlotEnable         = 1,
+                .CurrentFieldEnable = 1,
+                .SoftClampLow       = 0,
+                .SoftClampHigh      = 1023,
+                .PlanarAlpha        = 1023,
+                .ConstantAlpha      = 1,
+                .SourceRectLeft     = 0,
+                .SourceRectRight    = (input[i]->width  - 1) << 16, /* U14.16 (for subpixel positioning) */
+                .SourceRectTop      = 0,
+                .SourceRectBottom   = (input[i]->height - 1) << 16,
+                .DestRectLeft       = 0,
+                .DestRectRight      = input[i]->width  - 1,
+                .DestRectTop        = 0,
+                .DestRectBottom     = input[i]->height - 1,
+            },
+            .slotSurfaceConfig = {
+                .SlotPixelFormat    = envideo_pixfmt_to_vic(ctx->input_format),
+                .SlotChromaLocHoriz = ((input_desc->flags & AV_PIX_FMT_FLAG_RGB)         ||
+                                       input[i]->chroma_location == AVCHROMA_LOC_TOPLEFT ||
+                                       input[i]->chroma_location == AVCHROMA_LOC_LEFT    ||
+                                       input[i]->chroma_location == AVCHROMA_LOC_BOTTOMLEFT) ? 0 : 1,
+                .SlotChromaLocVert  = ((input_desc->flags & AV_PIX_FMT_FLAG_RGB)         ||
+                                       input[i]->chroma_location == AVCHROMA_LOC_TOPLEFT ||
+                                       input[i]->chroma_location == AVCHROMA_LOC_TOP) ? 0 :
+                                      (input[i]->chroma_location == AVCHROMA_LOC_LEFT    ||
+                                       input[i]->chroma_location == AVCHROMA_LOC_CENTER) ? 1 : 2,
+                .SlotBlkKind        = !input_frame->is_pitch ? NVB0B6_BLK_KIND_GENERIC_16Bx2 : NVB0B6_BLK_KIND_PITCH,
+                .SlotBlkHeight      = !input_frame->is_pitch ? 1 : 0, /* GOB height 2 */
+                .SlotCacheWidth     = !input_frame->is_pitch ? 1 : 3, /* 32Bx8 for block, 128Bx2 for pitch */
+                .SlotSurfaceWidth   = input[i]->width  - 1,
+                .SlotSurfaceHeight  = input[i]->height - 1,
+                .SlotLumaWidth      = (input[i]->linesize[0] / input_desc->comp[0].step) - 1,
+                .SlotLumaHeight     = FFALIGN(input[i]->height, !input_frame->is_pitch ? 32 : 2) - 1,
+                .SlotChromaWidth    = (input_desc->flags & AV_PIX_FMT_FLAG_RGB) ?
+                                      -1 : (input[i]->linesize[1] / input_desc->comp[1].step) - 1,
+                .SlotChromaHeight   = (input_desc->flags & AV_PIX_FMT_FLAG_RGB) ? -1 :
+                                      (FFALIGN(input[i]->height, !input_frame->is_pitch ? 32 : 2) >> input_desc->log2_chroma_h) - 1,
+            },
+        };
+    }
+
+    return 0;
+}

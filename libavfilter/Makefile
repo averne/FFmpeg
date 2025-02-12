@@ -281,6 +281,7 @@ OBJS-$(CONFIG_DEINTERLACE_QSV_FILTER)        += vf_vpp_qsv.o
 OBJS-$(CONFIG_DEINTERLACE_VAAPI_FILTER)      += vf_deinterlace_vaapi.o vaapi_vpp.o
 OBJS-$(CONFIG_DEJUDDER_FILTER)               += vf_dejudder.o
 OBJS-$(CONFIG_DELOGO_FILTER)                 += vf_delogo.o
+OBJS-$(CONFIG_DENOISE_ENVIDEO_FILTER)        += vf_misc_envideo.o envideo_vpp.o
 OBJS-$(CONFIG_DENOISE_VAAPI_FILTER)          += vf_misc_vaapi.o vaapi_vpp.o
 OBJS-$(CONFIG_DESHAKE_OPENCL_FILTER)        += vf_deshake_opencl.o opencl.o \
                                                 opencl/deshake.o transform.o
@@ -499,6 +500,7 @@ OBJS-$(CONFIG_SETRANGE_FILTER)               += vf_setparams.o
 OBJS-$(CONFIG_SETSAR_FILTER)                 += vf_aspect.o
 OBJS-$(CONFIG_SETTB_FILTER)                  += settb.o
 OBJS-$(CONFIG_SHARPEN_NPP_FILTER)            += vf_sharpen_npp.o
+OBJS-$(CONFIG_SHARPNESS_ENVIDEO_FILTER)      += vf_misc_envideo.o envideo_vpp.o
 OBJS-$(CONFIG_SHARPNESS_VAAPI_FILTER)        += vf_misc_vaapi.o vaapi_vpp.o
 OBJS-$(CONFIG_SHEAR_FILTER)                  += vf_shear.o
 OBJS-$(CONFIG_SHOWINFO_FILTER)               += vf_showinfo.o
@@ -680,6 +682,7 @@ SKIPHEADERS-$(CONFIG_LIBVIDSTAB)             += vidstabutils.h
 
 SKIPHEADERS-$(CONFIG_AMF)                    += vf_amf_common.h
 SKIPHEADERS-$(CONFIG_QSVVPP)                 += qsvvpp.h stack_internal.h
+SKIPHEADERS-$(CONFIG_ENVIDEO)                += envideo_vpp.h
 SKIPHEADERS-$(CONFIG_OPENCL)                 += opencl.h
 SKIPHEADERS-$(CONFIG_VAAPI)                  += vaapi_vpp.h stack_internal.h
 SKIPHEADERS-$(CONFIG_VULKAN)                 += vulkan_filter.h
