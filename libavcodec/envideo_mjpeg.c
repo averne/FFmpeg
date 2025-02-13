@@ -159,7 +159,7 @@ static void envideo_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, 
         .output_stride_luma   = s->picture->linesize[0],
         .output_stride_chroma = s->picture->linesize[1],
 
-        .tile_mode            = 0,  /* Pitch linear (tiled formats are unsupported by the T210) */
+        .tile_mode            = 0,  /* Pitch linear (tiled formats are unsupported by NVJPG1) */
         .memory_mode          = memory_mode,
         .power2_downscale     = 0,
         .motion_jpeg_type     = 0,  /* Type A */
@@ -309,6 +309,25 @@ static int envideo_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
 }
 
+static int envideo_mjpeg_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
+    AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
+
+    int err;
+
+    err = ff_envideo_frame_params(avctx, hw_frames_ctx);
+    if (err < 0)
+        return err;
+
+    /**
+     * NVJPG1 can only output pitch linear data.
+     * The VIC engine might be used on decoded frames to perform postprocessing,
+     * and has a 256b alignment contraint for pitch layouts.
+     */
+    frames_ctx->width = FFALIGN(avctx->coded_width, 256);
+
+    return 0;
+}
+
 static int envideo_mjpeg_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
     EnvideoMJPEGDecodeContext *src_ctx = src->internal->hwaccel_priv_data;
     EnvideoMJPEGDecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
@@ -327,7 +346,7 @@ const FFHWAccel ff_mjpeg_envideo_hwaccel = {
     .decode_slice          = &envideo_mjpeg_decode_slice,
     .init                  = &envideo_mjpeg_decode_init,
     .uninit                = &envideo_mjpeg_decode_uninit,
-    .frame_params          = &ff_envideo_frame_params,
+    .frame_params          = &envideo_mjpeg_frame_params,
     .update_thread_context = &envideo_mjpeg_update_thread_context,
     .priv_data_size        = sizeof(EnvideoMJPEGDecodeContext),
     .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
