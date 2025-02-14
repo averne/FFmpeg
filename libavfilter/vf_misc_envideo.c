@@ -329,8 +329,8 @@ static int envideo_spatialfilter_prepare_cmdbuf(EnvideoSpatialFilterContext *ctx
 
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONTROL_PARAMS,
                           DRF_NUM(B0B6_VIDEO_COMPOSITOR, _SET_CONTROL_PARAMS, _CONFIG_STRUCT_SIZE, sizeof(VicConfigStruct) >> 4) |
-                          DRF_NUM(B0B6_VIDEO_COMPOSITOR, _SET_CONTROL_PARAMS, _GPTIMER_ON,         1)                            |
-                          DRF_NUM(B0B6_VIDEO_COMPOSITOR, _SET_CONTROL_PARAMS, _FALCON_CONTROL,     1));
+                          DRF_NUM(B0B6_VIDEO_COMPOSITOR, _SET_CONTROL_PARAMS, _GPTIMER_ON,     1)                                |
+                          DRF_NUM(B0B6_VIDEO_COMPOSITOR, _SET_CONTROL_PARAMS, _FALCON_CONTROL, 1));
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_CONFIG_STRUCT_OFFSET, job->input_map,  ctx->core.vic_setup_off);
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVB0B6_VIDEO_COMPOSITOR_SET_FILTER_STRUCT_OFFSET, ctx->filter_map, 0);
 
