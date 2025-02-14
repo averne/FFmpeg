@@ -32,6 +32,23 @@
 #include "decode.h"
 #include "envideo_decode.h"
 
+static EnvideoCodec avcodec_to_envideo(enum AVCodecID c) {
+    switch (c) {
+        case AV_CODEC_ID_MJPEG:      return EnvideoCodec_Mjpeg;
+        case AV_CODEC_ID_MPEG1VIDEO: return EnvideoCodec_Mpeg1;
+        case AV_CODEC_ID_MPEG2VIDEO: return EnvideoCodec_Mpeg2;
+        case AV_CODEC_ID_MPEG4:      return EnvideoCodec_Mpeg4;
+        case AV_CODEC_ID_WMV3:
+        case AV_CODEC_ID_VC1:        return EnvideoCodec_Vc1;
+        case AV_CODEC_ID_H264:       return EnvideoCodec_H264;
+        case AV_CODEC_ID_HEVC:       return EnvideoCodec_H265;
+        case AV_CODEC_ID_VP8:        return EnvideoCodec_Vp8;
+        case AV_CODEC_ID_VP9:        return EnvideoCodec_Vp9;
+        case AV_CODEC_ID_AV1:        return EnvideoCodec_Av1;
+        default:                     return (EnvideoCodec)-1;
+    }
+}
+
 static void envideo_shared_free(AVRefStructOpaque opaque, void *obj) {
     FFEnvideoDecodeContextShared *shared = obj;
 
@@ -54,7 +71,6 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
     FFEnvideoDecodeContextShared *s = ctx->shared;
 
     AVHWFramesContext      *frames_ctx;
-    AVHWDeviceContext      *hw_device_ctx;
     AVEnvideoDeviceContext *device_ctx;
     int err;
 
@@ -62,9 +78,8 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
     if (err < 0)
         goto fail;
 
-    frames_ctx    = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
-    hw_device_ctx = (AVHWDeviceContext *)frames_ctx->device_ref->data;
-    device_ctx    = hw_device_ctx->hwctx;
+    frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
+    device_ctx = frames_ctx->device_ctx->hwctx;
 
     s->hw_device_ref = av_buffer_ref(frames_ctx->device_ref);
     if (!s->hw_device_ref) {
@@ -85,6 +100,8 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
                                    ctx->input_map_size, ENVIDEO_MAP_ALIGN,
                                    EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable | EnvideoMap_UsageCmdbuf,
                                    s->cmdbuf_off, s->max_cmdbuf_size);
+    if (err < 0)
+        goto fail;
 
     return 0;
 
@@ -95,15 +112,13 @@ fail:
 
 int ff_envideo_decode_uninit(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
     AVHWFramesContext      *frames_ctx;
-    AVHWDeviceContext      *hw_device_ctx;
     AVEnvideoDeviceContext *device_ctx;
     FFEnvideoOperation *op;
     int i;
 
     if (avctx->hw_frames_ctx) {
         frames_ctx    = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
-        hw_device_ctx = (AVHWDeviceContext *)frames_ctx->device_ref->data;
-        device_ctx    = hw_device_ctx->hwctx;
+        device_ctx    = frames_ctx->device_ctx->hwctx;
 
         for (i = 0; i < ctx->num_operations; ++i) {
             op  = &ctx->operations[i];
@@ -389,131 +404,115 @@ int ff_envideo_update_thread_context(FFEnvideoDecodeContext *dst, const FFEnvide
     return 0;
 }
 
-static int envideo_get_size_constraints(enum AVCodecID codec,
-                                        int *min_width, int *min_height,
-                                        int *max_width, int *max_height,
-                                        int *align,     int *max_mbs)
-{
-    switch (codec) {
-        case AV_CODEC_ID_MPEG1VIDEO:
-        case AV_CODEC_ID_MPEG2VIDEO:
-            *min_width = 48,    *min_height = 1;
-            *max_width = 4096,  *max_height = 4096;
-            *align     = 16,    *max_mbs    = 0x20000;
-            break;
-
-        case AV_CODEC_ID_MPEG4:
-            *min_width = 48,    *min_height = 1;
-            *max_width = 2048,  *max_height = 2048;
-            *align     = 16,    *max_mbs    = 0x2000;
-            break;
-
-        case AV_CODEC_ID_VC1:
-        case AV_CODEC_ID_WMV3:
-            *min_width = 48,    *min_height = 1;
-            *max_width = 2048,  *max_height = 2048;
-            *align     = 1,     *max_mbs    = -1;
-            break;
-
-        case AV_CODEC_ID_H264:
-            *min_width = 48,    *min_height = 1;
-            *max_width = 4096,  *max_height = 4096;
-            *align     = 16,    *max_mbs    = 0x20000;
-            break;
-
-        case AV_CODEC_ID_HEVC:
-            /* Note: on nvdec 4.0+ (tegra 194) max dimensions are 8192, and max mbs 0x80000 */
-            *min_width = 144,   *min_height = 144;
-            *max_width = 4096,  *max_height = 4096;
-            *align     = 64,    *max_mbs    = 0x20000;
-            break;
-
-        case AV_CODEC_ID_VP8:
-            *min_width = 48,    *min_height = 1;
-            *max_width = 4096,  *max_height = 4096;
-            *align     = 16,    *max_mbs    = 0x20000;
-            break;
-
-        case AV_CODEC_ID_VP9:
-            /* Note: on nvdec 4.0+ (tegra 194) max dimensions are 8192, and max mbs 0x40000 */
-            *min_width = 144,   *min_height = 144;
-            *max_width = 4096,  *max_height = 4096;
-            *align     = 16,    *max_mbs    = 0x10000;
-            break;
-
-        case AV_CODEC_ID_MJPEG:
-            *min_width = 1,     *min_height = 1;
-            *max_width = 16384, *max_height = 16384;
-            *align     = 1,     *max_mbs    = -1;
-            break;
-
-        #if 0
-        case AV_CODEC_ID_AV1:
-            /* Note: on nvdec 4.0+ (tegra 194) max dimensions are 8192, and max mbs 0x80000 */
-            *min_width = 128,   *min_height = 128;
-            *max_width = 4096,  *max_height = 4096;
-            *align     = 64,    *max_mbs    = 0x20000;
-            break;
-        #endif
-
-        default:
-            return AVERROR(EINVAL);
-    }
-
-    return 0;
-}
-
 int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
-    AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
+    AVHWFramesContext      *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
+    AVEnvideoDeviceContext *device_ctx = frames_ctx->device_ctx->hwctx;
+
     const AVPixFmtDescriptor *sw_desc;
-
-    int min_width, min_height, max_width, max_height, align, max_mbs,
-        aligned_width, aligned_height, num_mbs;
-    int err;
-
-    err = envideo_get_size_constraints(avctx->codec_id, &min_width, &min_height,
-                                       &max_width, &max_height, &align, &max_mbs);
-    if (err < 0)
-        return err;
-
-    aligned_width  = FFALIGN(avctx->coded_width,  align);
-    aligned_height = FFALIGN(avctx->coded_height, align);
-    num_mbs = (aligned_width / 16) * (aligned_height / 16);
-
-    if ((aligned_width  < min_width)  || (aligned_width  > max_width) ||
-        (aligned_height < min_height) || (aligned_height > max_height))
-    {
-        av_log(avctx, AV_LOG_ERROR, "Dimensions %dx%d (min. %dx%d, max. %dx%d) "
-                                    "are not supported by the hardware for codec %s\n",
-               avctx->coded_width, avctx->coded_height,
-               min_width, min_height, max_width, max_height,
-               avctx->codec_descriptor->name);
-        return AVERROR(EINVAL);
-    }
-
-    if ((max_mbs > 0) && (num_mbs > max_mbs)) {
-        av_log(avctx, AV_LOG_ERROR, "Number of macroblocks %d exceeds maximum %d "
-                                    "for codec %s\n",
-               num_mbs, max_mbs, avctx->codec_descriptor->name);
-        return AVERROR(EINVAL);
-    }
-
-    frames_ctx->format = AV_PIX_FMT_ENVIDEO;
-    frames_ctx->width  = FFALIGN(avctx->coded_width,  2); /* NVDEC only supports even sizes */
-    frames_ctx->height = FFALIGN(avctx->coded_height, 2);
+    EnvideoDecodeConstraints constraints;
+    int num_planes, num_mbs, err;
 
     sw_desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
     if (!sw_desc)
         return AVERROR_BUG;
 
+    constraints.codec = avcodec_to_envideo(avctx->codec_id);
+    constraints.depth = sw_desc->comp[0].depth;
+
+    num_planes = av_pix_fmt_count_planes(avctx->sw_pix_fmt);
+    if (num_planes == 1)
+        constraints.subsample = EnvideoSubsampling_Monochrome;
+    else if (sw_desc->log2_chroma_w == 1 && sw_desc->log2_chroma_h == 1)
+        constraints.subsample = EnvideoSubsampling_420;
+    else if (sw_desc->log2_chroma_w == 1 && sw_desc->log2_chroma_h == 0)
+        constraints.subsample = EnvideoSubsampling_422;
+    else if (sw_desc->log2_chroma_w == 0 && sw_desc->log2_chroma_h == 0)
+        constraints.subsample = EnvideoSubsampling_444;
+    else
+        return AVERROR(EINVAL);
+
+    err = envideo_get_decode_constraints(device_ctx->device, &constraints);
+    if (err < 0)
+        return err;
+
+    if (!constraints.supported) {
+        av_log(avctx, AV_LOG_ERROR, "Codec %s is not supported by the hardware\n",
+               avctx->codec_descriptor->name);
+        return AVERROR(EINVAL);
+    }
+
+    if ((avctx->coded_width  < constraints.min_width)  || (avctx->coded_width  > constraints.max_width) ||
+        (avctx->coded_height < constraints.min_height) || (avctx->coded_height > constraints.max_height))
+    {
+        av_log(avctx, AV_LOG_ERROR, "Dimensions %dx%d (min. %dx%d, max. %dx%d) "
+                                    "are not supported by the hardware for codec %s\n",
+               avctx->coded_width, avctx->coded_height,
+               constraints.min_width, constraints.min_height,
+               constraints.max_width, constraints.max_height,
+               avctx->codec_descriptor->name);
+        return AVERROR(EINVAL);
+    }
+
+    num_mbs = (FFALIGN(avctx->coded_width, 16) / 16) * (FFALIGN(avctx->coded_height, 16) / 16);
+    if ((constraints.max_mbs > 0) && (num_mbs > constraints.max_mbs)) {
+        av_log(avctx, AV_LOG_ERROR, "Number of macroblocks %d exceeds maximum %d "
+                                    "for codec %s\n",
+               num_mbs, constraints.max_mbs, avctx->codec_descriptor->name);
+        return AVERROR(EINVAL);
+    }
+
+    frames_ctx->format = AV_PIX_FMT_ENVIDEO;
+    frames_ctx->width  = avctx->coded_width;
+    frames_ctx->height = avctx->coded_height;
+
     switch (sw_desc->comp[0].depth) {
         case 8:
-            frames_ctx->sw_format = (sw_desc->nb_components > 1) ?
-                                    AV_PIX_FMT_NV12 : AV_PIX_FMT_GRAY8;
+            switch (constraints.subsample) {
+                case EnvideoSubsampling_Monochrome:
+                    frames_ctx->sw_format = AV_PIX_FMT_GRAY8;
+                    break;
+                case EnvideoSubsampling_420:
+                    frames_ctx->sw_format = AV_PIX_FMT_NV12;
+                    break;
+                case EnvideoSubsampling_422:
+                    frames_ctx->sw_format = AV_PIX_FMT_NV16;
+                    break;
+                case EnvideoSubsampling_444:
+                    frames_ctx->sw_format = AV_PIX_FMT_YUV444P;
+                    break;
+            }
             break;
         case 10:
-            frames_ctx->sw_format = (sw_desc->nb_components > 1) ?
-                                    AV_PIX_FMT_P010 : AV_PIX_FMT_GRAY10;
+            switch (constraints.subsample) {
+                case EnvideoSubsampling_Monochrome:
+                    frames_ctx->sw_format = AV_PIX_FMT_GRAY10LE;
+                    break;
+                case EnvideoSubsampling_420:
+                    frames_ctx->sw_format = AV_PIX_FMT_P010LE;
+                    break;
+                case EnvideoSubsampling_422:
+                    frames_ctx->sw_format = AV_PIX_FMT_P210LE;
+                    break;
+                case EnvideoSubsampling_444:
+                    frames_ctx->sw_format = AV_PIX_FMT_YUV444P10LE;
+                    break;
+            }
+            break;
+        case 12:
+            switch (constraints.subsample) {
+                case EnvideoSubsampling_Monochrome:
+                    frames_ctx->sw_format = AV_PIX_FMT_GRAY12LE;
+                    break;
+                case EnvideoSubsampling_420:
+                    frames_ctx->sw_format = AV_PIX_FMT_P012LE;
+                    break;
+                case EnvideoSubsampling_422:
+                    frames_ctx->sw_format = AV_PIX_FMT_P212LE;
+                    break;
+                case EnvideoSubsampling_444:
+                    frames_ctx->sw_format = AV_PIX_FMT_YUV444P12LE;
+                    break;
+            }
             break;
         default:
             return AVERROR(EINVAL);
