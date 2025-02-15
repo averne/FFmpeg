@@ -331,9 +331,7 @@ static int envideo_vp8_end_frame(AVCodecContext *avctx) {
     return ff_envideo_end_frame(avctx, frame, &ctx->core, NULL, 0);
 }
 
-static int envideo_vp8_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
-                                    uint32_t buf_size)
-{
+static int envideo_vp8_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     VP8Context  *h = avctx->priv_data;
     AVFrame *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
 

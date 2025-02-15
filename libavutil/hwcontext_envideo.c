@@ -39,8 +39,19 @@ typedef struct EnvideoDevicePriv {
 
 static const enum AVPixelFormat supported_sw_formats[] = {
     AV_PIX_FMT_GRAY8,
+    AV_PIX_FMT_GRAY10LE,
+    AV_PIX_FMT_GRAY12LE,
     AV_PIX_FMT_NV12,
     AV_PIX_FMT_P010,
+    AV_PIX_FMT_P012,
+    AV_PIX_FMT_NV16,
+    AV_PIX_FMT_P210LE,
+    AV_PIX_FMT_P212LE,
+    AV_PIX_FMT_YUV440P,
+    AV_PIX_FMT_YUV422P,
+    AV_PIX_FMT_YUV444P,
+    AV_PIX_FMT_YUV444P10LE,
+    AV_PIX_FMT_YUV444P12LE,
     AV_PIX_FMT_YUV420P,
 };
 

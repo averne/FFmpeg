@@ -306,7 +306,6 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     mem = envideo_map_get_cpu_addr(input_map);
 
     /* Match source color depth regardless of colorspace */
-    /* TODO: Dithered down 8-bit post-processing (needs DISPLAY_BUF mappings) */
     if (frames_ctx->sw_format == AV_PIX_FMT_P010 && sps->bit_depth == 10) {
         output_mode = 1;                /* 10-bit bt709 */
     } else {
@@ -582,8 +581,6 @@ static int envideo_hevc_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, HEVCContext *s,
             PUSH_FRAME(ctx->scratch_ref->f, i);
     }
 
-    /* TODO: Dithered 8-bit post-processing, binding to DISPLAY_BUF */
-
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVC9B0_EXECUTE,
                           DRF_DEF(C9B0, _EXECUTE, _AWAKEN, _ENABLE));
 
@@ -655,9 +652,7 @@ static int envideo_hevc_end_frame(AVCodecContext *avctx) {
     return ff_envideo_end_frame(avctx, frame, &ctx->core, NULL, 0);
 }
 
-static int envideo_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
-                                     uint32_t buf_size)
-{
+static int envideo_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     HEVCContext                   *s = avctx->priv_data;
     AVFrame                   *frame = s->cur_frame->f;
     FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;

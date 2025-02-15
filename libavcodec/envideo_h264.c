@@ -495,9 +495,7 @@ static int envideo_h264_end_frame(AVCodecContext *avctx) {
                                 sizeof(bitstream_end_sequence));
 }
 
-static int envideo_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
-                                     uint32_t buf_size)
-{
+static int envideo_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     H264Context *h = avctx->priv_data;
     AVFrame *frame = h->cur_pic_ptr->f;
 

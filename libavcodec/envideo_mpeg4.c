@@ -338,9 +338,7 @@ static int envideo_mpeg4_end_frame(AVCodecContext *avctx) {
                                 sizeof(bitstream_end_sequence));
 }
 
-static int envideo_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
-                                  uint32_t buf_size)
-{
+static int envideo_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     Mpeg4DecContext *m = avctx->priv_data;
     AVFrame     *frame = m->m.cur_pic.ptr->f;
 

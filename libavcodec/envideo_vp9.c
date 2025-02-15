@@ -657,9 +657,7 @@ static int envideo_vp9_end_frame(AVCodecContext *avctx) {
     return 0;
 }
 
-static int envideo_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
-                                    uint32_t buf_size)
-{
+static int envideo_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     VP9SharedContext *h = avctx->priv_data;
     AVFrame      *frame = h->frames[CUR_FRAME].tf.f;
 
