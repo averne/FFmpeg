@@ -809,6 +809,9 @@ static enum AVPixelFormat get_pixel_format(H264Context *h, int force_callback)
             *fmt++ = AV_PIX_FMT_YUV420P9;
         break;
     case 10:
+#if CONFIG_H264_ENVIDEO_HWACCEL
+        *fmt++ = AV_PIX_FMT_ENVIDEO;
+#endif
 #if CONFIG_H264_VIDEOTOOLBOX_HWACCEL
         if (h->avctx->colorspace != AVCOL_SPC_RGB)
             *fmt++ = AV_PIX_FMT_VIDEOTOOLBOX;
