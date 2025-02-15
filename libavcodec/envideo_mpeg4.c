@@ -340,11 +340,18 @@ static int envideo_mpeg4_end_frame(AVCodecContext *avctx) {
 
 static int envideo_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     Mpeg4DecContext *m = avctx->priv_data;
+    MpegEncContext  *s = &m->m;
     AVFrame     *frame = m->m.cur_pic.ptr->f;
 
-    /* Rewind the bitstream looking for the VOP start marker */
+    /**
+     * Look for the vop startmarker within the bitstream.
+     * This data was discarded after the slice header parsing,
+     * so we must start from the beginning of the packet.
+     */
+    buf      = s->gb.buffer;
+    buf_size = s->gb.buffer_end - s->gb.buffer;
     while (*(uint32_t *)buf != AV_BE2NE32C(VOP_STARTCODE))
-        buf -= 1, buf_size += 1;
+        buf += 1, buf_size -= 1;
 
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
 }
