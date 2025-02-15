@@ -109,39 +109,55 @@ fail:
 static void envideo_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, MJpegDecodeContext *s,
                                               EnvideoMJPEGDecodeContext *ctx)
 {
+    AVHWFramesContext *hw_frames_ctx = (AVHWFramesContext *)s->picture->hw_frames_ctx->data;
+
     int input_chroma_mode, output_chroma_mode, memory_mode;
     int i, j;
 
     switch (s->hwaccel_sw_pix_fmt) {
         case AV_PIX_FMT_GRAY8:
             input_chroma_mode  = 0; /* Monochrome */
-            output_chroma_mode = 0; /* Monochrome */
-            memory_mode        = 3; /* YUV420, for some reason decoding fails with NV12 */
             break;
         default:
         case AV_PIX_FMT_YUV420P:
         case AV_PIX_FMT_YUVJ420P:
-            input_chroma_mode  = 1; /* YUV420 */
-            output_chroma_mode = 1; /* YUV420 */
-            memory_mode        = 0; /* NV12 */
+            input_chroma_mode = 1; /* YUV420 */
             break;
         case AV_PIX_FMT_YUV422P:
         case AV_PIX_FMT_YUVJ422P:
-            input_chroma_mode  = 2; /* YUV422H */
-            output_chroma_mode = 1; /* YUV420 */
-            memory_mode        = 0; /* NV12 */
+            input_chroma_mode = 2; /* YUV422H */
             break;
         case AV_PIX_FMT_YUV440P:
         case AV_PIX_FMT_YUVJ440P:
-            input_chroma_mode  = 3; /* YUV422V (ie. YUV440) */
-            output_chroma_mode = 1; /* YUV420 */
-            memory_mode        = 0; /* NV12 */
+            input_chroma_mode = 3; /* YUV422V (ie. YUV440) */
             break;
         case AV_PIX_FMT_YUV444P:
         case AV_PIX_FMT_YUVJ444P:
-            input_chroma_mode  = 4; /* YUV444 */
+            input_chroma_mode = 4; /* YUV444 */
+            break;
+    }
+
+    switch (hw_frames_ctx->sw_format) {
+        case AV_PIX_FMT_GRAY8:
+            output_chroma_mode = 0; /* Monochrome */
+            memory_mode        = 3; /* Planar */
+            break;
+        default:
+        case AV_PIX_FMT_NV12:
             output_chroma_mode = 1; /* YUV420 */
-            memory_mode        = 0; /* NV12 */
+            memory_mode        = 0; /* Semi-planar NV12 */
+            break;
+        case AV_PIX_FMT_YUV422P:
+            output_chroma_mode = 2; /* YUV422H */
+            memory_mode        = 3; /* Planar */
+            break;
+        case AV_PIX_FMT_YUV440P:
+            output_chroma_mode = 3; /* YUV422V (ie. YUV440) */
+            memory_mode        = 3; /* Planar */
+            break;
+        case AV_PIX_FMT_YUV444P:
+            output_chroma_mode = 4; /* YUV444 */
+            memory_mode        = 3; /* Planar */
             break;
     }
 
@@ -159,10 +175,10 @@ static void envideo_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, 
         .output_stride_luma   = s->picture->linesize[0],
         .output_stride_chroma = s->picture->linesize[1],
 
-        .tile_mode            = 0,  /* Pitch linear (tiled formats are unsupported by NVJPG1) */
+        .tile_mode            = 0,  /* Pitch linear (tiled formats are unsupported by NVJPG1.0) */
         .memory_mode          = memory_mode,
         .power2_downscale     = 0,
-        .motion_jpeg_type     = 0,  /* Type A */
+        .motion_jpeg_type     = s->avctx->codec_id == AV_CODEC_ID_MJPEGB,
 
         .start_mcu_x          = 0,
         .start_mcu_y          = 0,
@@ -225,6 +241,9 @@ static int envideo_mjpeg_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MJpegDecodeContex
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC_CHROMA_U,
                           av_envideo_frame_get_fbuf_map(current_frame),
                           current_frame->data[1] - current_frame->data[0]);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVE7D0_SET_CUR_PIC_CHROMA_V,
+                          av_envideo_frame_get_fbuf_map(current_frame),
+                          current_frame->data[2] - current_frame->data[0]);
 
     FF_ENVIDEO_PUSH_VALUE(cmdbuf, NVE7D0_EXECUTE,
                           DRF_DEF(E7D0, _EXECUTE, _AWAKEN, _ENABLE));
@@ -318,8 +337,12 @@ static int envideo_mjpeg_frame_params(AVCodecContext *avctx, AVBufferRef *hw_fra
     if (err < 0)
         return err;
 
+    /* NVJPG1.0 cannot output 4:2:2 subsampled data to an interleaved chroma plane */
+    if (frames_ctx->sw_format == AV_PIX_FMT_NV16)
+        frames_ctx->sw_format = AV_PIX_FMT_YUV422P;
+
     /**
-     * NVJPG1 can only output pitch linear data.
+     * NVJPG1.0 can only output pitch linear data.
      * The VIC engine might be used on decoded frames to perform postprocessing,
      * and has a 256b alignment contraint for pitch layouts.
      */

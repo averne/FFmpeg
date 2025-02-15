@@ -426,6 +426,8 @@ int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
         constraints.subsample = EnvideoSubsampling_420;
     else if (sw_desc->log2_chroma_w == 1 && sw_desc->log2_chroma_h == 0)
         constraints.subsample = EnvideoSubsampling_422;
+    else if (sw_desc->log2_chroma_w == 0 && sw_desc->log2_chroma_h == 1)
+        constraints.subsample = EnvideoSubsampling_440;
     else if (sw_desc->log2_chroma_w == 0 && sw_desc->log2_chroma_h == 0)
         constraints.subsample = EnvideoSubsampling_444;
     else
@@ -436,7 +438,7 @@ int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
         return err;
 
     if (!constraints.supported) {
-        av_log(avctx, AV_LOG_ERROR, "Codec %s is not supported by the hardware\n",
+        av_log(avctx, AV_LOG_ERROR, "Configuration is not supported by the hardware for codec %s\n",
                avctx->codec_descriptor->name);
         return AVERROR(EINVAL);
     }
@@ -465,7 +467,7 @@ int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
     frames_ctx->width  = avctx->coded_width;
     frames_ctx->height = avctx->coded_height;
 
-    switch (sw_desc->comp[0].depth) {
+    switch (constraints.depth) {
         case 8:
             switch (constraints.subsample) {
                 case EnvideoSubsampling_Monochrome:
@@ -476,6 +478,9 @@ int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
                     break;
                 case EnvideoSubsampling_422:
                     frames_ctx->sw_format = AV_PIX_FMT_NV16;
+                    break;
+                case EnvideoSubsampling_440:
+                    frames_ctx->sw_format = AV_PIX_FMT_YUV440P;
                     break;
                 case EnvideoSubsampling_444:
                     frames_ctx->sw_format = AV_PIX_FMT_YUV444P;
