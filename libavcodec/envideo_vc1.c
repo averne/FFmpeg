@@ -403,33 +403,25 @@ static int envideo_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf, u
     FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
     AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
 
-    nvdec_vc1_pic_s *setup;
     uint8_t *mem;
-    enum VC1Code startcode;
+    enum VC1Code marker;
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
-    setup = (nvdec_vc1_pic_s *)(mem + sc->pic_setup_off);
-
-    if (ctx->is_first_slice) {
-        startcode = VC1_CODE_FRAME;
-
-        if (v->profile == PROFILE_ADVANCED &&
+    if (!ctx->is_first_slice)
+        marker = VC1_CODE_SLICE;
+    else if (v->profile == PROFILE_ADVANCED &&
                 v->fcm == ILACE_FIELD && v->second_field)
-            startcode = VC1_CODE_FIELD;
+        marker = VC1_CODE_FIELD;
+    else
+        marker = VC1_CODE_FRAME;
 
-        /**
-         * Skip a dword if the bitstream already contains the startcode.
-         * We could probably just not insert our startcode,
-         * but this reproduces logic from official code.
-         */
-        if ((buf_size >= 4) && (AV_RB32(buf) == startcode))
-            setup->bitstream_offset = 1;
-
-        AV_WB32(mem + sc->bitstream_off + tf->operation.bitstream_len, startcode);
-        tf->operation.bitstream_len += 4;
-        ctx->is_first_slice = false;
+    if (AV_RB32(buf) != marker) {
+        AV_WB32(mem + sc->bitstream_off + tf->operation.bitstream_len, marker);
+        tf->operation.bitstream_len += sizeof(marker);
     }
+
+    ctx->is_first_slice = false;
 
     return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
 }
