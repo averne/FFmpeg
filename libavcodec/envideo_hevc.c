@@ -42,8 +42,9 @@ typedef struct EnvideoHEVCFrameData {
 typedef struct EnvideoHEVCDecodeContextShared {
     EnvideoMap *common_map;
     uint32_t tile_sizes_off, scaling_list_off,
-             coloc_off, filter_off;
-    uint32_t colmv_size, sao_offset, bsd_offset;
+             coloc_off, filter_off, intra_top_off;
+    uint32_t col_mv_size, sao_offset, bsd_offset,
+             flt_above_offset, sao_above_offset, slice_edge_offset;
 } EnvideoHEVCDecodeContextShared;
 
 typedef struct EnvideoHEVCDecodeContext {
@@ -56,15 +57,8 @@ typedef struct EnvideoHEVCDecodeContext {
     uint32_t refs_mask;
 } EnvideoHEVCDecodeContext;
 
-/* Size (width, height) of a macroblock */
-#define MB_SIZE 16
-
 /* Maximum size (width, height) of a coding tree unit */
 #define CTU_SIZE 64
-
-#define FILTER_SIZE 480
-#define SAO_SIZE    3840
-#define BSD_SIZE    60
 
 static int envideo_hevc_decode_uninit(AVCodecContext *avctx) {
     EnvideoHEVCDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
@@ -95,8 +89,10 @@ static int envideo_hevc_decode_init(AVCodecContext *avctx) {
     AVEnvideoDeviceContext *device_hwctx;
     EnvideoHEVCDecodeContextShared *ss;
     FFEnvideoDecodeContextShared *sc;
-    uint32_t aligned_width, aligned_height,
-             coloc_size, filter_buffer_size, common_map_size;
+    uint32_t aligned_width, aligned_height, a, b,
+             col_mv_size, something_size, sao_size, bsd_size,
+             flt_above_size, sao_above_size, slice_edge_size,
+             coloc_size, filter_size, common_map_size;
     int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing hevc-envideo decoder\n");
@@ -138,14 +134,37 @@ static int envideo_hevc_decode_init(AVCodecContext *avctx) {
     hw_device_ctx = (AVHWDeviceContext *)sc->hw_device_ref->data;
     device_hwctx  = hw_device_ctx->hwctx;
 
-    aligned_width      = FFALIGN(avctx->coded_width,  CTU_SIZE);
-    aligned_height     = FFALIGN(avctx->coded_height, CTU_SIZE);
-    coloc_size         = (aligned_width * aligned_height) + (aligned_width * aligned_height / MB_SIZE);
-    filter_buffer_size = (FILTER_SIZE + SAO_SIZE + BSD_SIZE) * aligned_height;
+    aligned_width  = FFALIGN(avctx->coded_width,  CTU_SIZE);
+    aligned_height = FFALIGN(avctx->coded_height, CTU_SIZE);
 
-    ss->coloc_off   = 0;
-    ss->filter_off  = FFALIGN(ss->coloc_off  + coloc_size,         ENVIDEO_MAP_ALIGN);
-    common_map_size = FFALIGN(ss->filter_off + filter_buffer_size, 0x1000);
+    if (aligned_width * aligned_height > 0x220000)
+        a = aligned_width >> 5, b = aligned_height >> 5;
+    else
+        a = aligned_width >> 4, b = aligned_height >> 4;
+
+    col_mv_size     = aligned_width * aligned_height / 16;
+    something_size  = FFALIGN(aligned_height * 0x260,  ENVIDEO_MAP_ALIGN);
+    sao_size        = FFALIGN(aligned_height * 0x1300, ENVIDEO_MAP_ALIGN);
+    bsd_size        = FFALIGN(aligned_height * 0x4c,   ENVIDEO_MAP_ALIGN);
+    flt_above_size  = FFALIGN((b + a * b) * 0xb00,     ENVIDEO_MAP_ALIGN);
+    sao_above_size  = FFALIGN(a * b * 0x300,           ENVIDEO_MAP_ALIGN);
+    slice_edge_size = ENVIDEO_MAP_ALIGN;
+
+    ss->col_mv_size       =  col_mv_size                            / 256;
+    ss->sao_offset        =  something_size                         / 256;
+    ss->bsd_offset        = (ss->sao_offset       + sao_size)       / 256;
+    ss->flt_above_offset  = (ss->bsd_offset       + bsd_size)       / 256;
+    ss->sao_above_offset  = (ss->flt_above_offset + flt_above_size) / 256;
+    ss->slice_edge_offset = (ss->sao_above_offset + sao_above_size) / 256;
+
+    coloc_size  = col_mv_size * 17;
+    filter_size = something_size + sao_size       + bsd_size +
+                  flt_above_size + sao_above_size + slice_edge_size;
+
+    ss->coloc_off     = 0;
+    ss->filter_off    = FFALIGN(ss->coloc_off     + coloc_size,  ENVIDEO_MAP_ALIGN);
+    ss->intra_top_off = FFALIGN(ss->filter_off    + filter_size, ENVIDEO_MAP_ALIGN);
+    common_map_size   = FFALIGN(ss->intra_top_off + 0x10000,     0x1000);
 
     err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
                              EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
@@ -156,9 +175,7 @@ static int envideo_hevc_decode_init(AVCodecContext *avctx) {
     if (err < 0)
         goto fail;
 
-    ss->colmv_size = aligned_width * aligned_height / 16;
-    ss->sao_offset =  FILTER_SIZE             * aligned_height;
-    ss->bsd_offset = (FILTER_SIZE + SAO_SIZE) * aligned_height;
+    memset(envideo_map_get_cpu_addr(ss->common_map), 0, envideo_map_get_size(ss->common_map));
 
     return 0;
 
@@ -340,9 +357,9 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
             s->cur_frame->f->linesize[1] / ((output_mode == 1) ? 2 : 1),
         },
 
-        .colMvBuffersize                             = ctx->shared->colmv_size / 256,
-        .HevcSaoBufferOffset                         = ctx->shared->sao_offset / 256,
-        .HevcBsdCtrlOffset                           = ctx->shared->bsd_offset / 256,
+        .colMvBuffersize                             = ctx->shared->col_mv_size,
+        .HevcSaoBufferOffset                         = ctx->shared->sao_offset,
+        .HevcBsdCtrlOffset                           = ctx->shared->bsd_offset,
 
         .pic_width_in_luma_samples                   = sps->width,
         .pic_height_in_luma_samples                  = sps->height,
@@ -420,7 +437,42 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         .long_term_ref_pics_present_flag             = sps->long_term_ref_pics_present_flag,
         .num_bits_short_term_ref_pics_in_slice       = sh->short_term_ref_pic_set_size;
         */
+
+        .v1 = {
+            .error_recovery_start_pos                = 1, /* Start of slice segment */
+
+            .hevc_main10_444_ext = {
+                .HevcFltAboveOffset                  = ctx->shared->flt_above_offset,
+                .HevcSaoAboveOffset                  = ctx->shared->sao_above_offset,
+
+                .transformSkipRotationEnableFlag     = sps->range_extension ? sps->transform_skip_rotation_enabled    : 0,
+                .transformSkipContextEnableFlag      = sps->range_extension ? sps->transform_skip_context_enabled     : 0,
+                .intraBlockCopyEnableFlag            = 0,
+                .implicitRdpcmEnableFlag             = sps->range_extension ? sps->implicit_rdpcm_enabled             : 0,
+                .explicitRdpcmEnableFlag             = sps->range_extension ? sps->explicit_rdpcm_enabled             : 0,
+                .extendedPrecisionProcessingFlag     = sps->range_extension ? sps->extended_precision_processing      : 0,
+                .intraSmoothingDisabledFlag          = sps->range_extension ? sps->intra_smoothing_disabled           : 0,
+                .highPrecisionOffsetsEnableFlag      = sps->range_extension ? sps->high_precision_offsets_enabled     : 0,
+                .fastRiceAdaptationEnableFlag        = sps->range_extension ? sps->persistent_rice_adaptation_enabled : 0,
+                .cabacBypassAlignmentEnableFlag      = sps->range_extension ? sps->cabac_bypass_alignment_enabled     : 0,
+
+                .log2MaxTransformSkipSize            = pps->pps_range_extensions_flag ? pps->log2_max_transform_skip_block_size      : 2,
+                .crossComponentPredictionEnableFlag  = pps->pps_range_extensions_flag ? pps->cross_component_prediction_enabled_flag : 0,
+                .chromaQpAdjustmentEnableFlag        = pps->pps_range_extensions_flag ? pps->chroma_qp_offset_list_enabled_flag      : 0,
+                .diffCuChromaQpAdjustmentDepth       = pps->pps_range_extensions_flag ? pps->diff_cu_chroma_qp_offset_depth          : 0,
+                .chromaQpAdjustmentTableSize         = pps->pps_range_extensions_flag ? pps->chroma_qp_offset_list_len_minus1        : 0,
+                .log2SaoOffsetScaleLuma              = pps->pps_range_extensions_flag ? pps->log2_sao_offset_scale_luma              : 0,
+                .log2SaoOffsetScaleChroma            = pps->pps_range_extensions_flag ? pps->log2_sao_offset_scale_chroma            : 0,
+            }
+        },
+
+        .v3.HevcSliceEdgeOffset                      = ctx->shared->slice_edge_offset,
     };
+
+    for (i = 0; i < pps->chroma_qp_offset_list_len_minus1 + 1; ++i) {
+        setup->v1.hevc_main10_444_ext.cb_qp_adjustment[i] = pps->cb_qp_offset_list[i];
+        setup->v1.hevc_main10_444_ext.cr_qp_adjustment[i] = pps->cr_qp_offset_list[i];
+    }
 
     /**
      * Decoded frames need to be allocated an index that represents its position
@@ -566,6 +618,7 @@ static int envideo_hevc_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, HEVCContext *s,
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_HEVC_SET_TILE_SIZES_OFFSET,    input_map,      ss->tile_sizes_off);
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_HEVC_SET_FILTER_BUFFER_OFFSET, ss->common_map, ss->filter_off);
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_COLOC_DATA_OFFSET,         ss->common_map, ss->coloc_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_INTRA_TOP_BUF_OFFSET,      ss->common_map, ss->intra_top_off);
 
 #define PUSH_FRAME(fr, offset) ({                                                               \
     FF_ENVIDEO_PUSH_RELOC_TILED(cmdbuf, NVC9B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,         \
