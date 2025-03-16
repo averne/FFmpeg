@@ -72,6 +72,7 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
 
     AVHWFramesContext      *frames_ctx;
     AVEnvideoDeviceContext *device_ctx;
+    EnvideoDeviceInfo dev_info;
     int err;
 
     err = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_ENVIDEO);
@@ -80,6 +81,9 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
 
     frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     device_ctx = frames_ctx->device_ctx->hwctx;
+
+    dev_info = envideo_device_get_info(device_ctx->device);
+    s->is_tegra = dev_info.is_tegra;
 
     s->hw_device_ref = av_buffer_ref(frames_ctx->device_ref);
     if (!s->hw_device_ref) {

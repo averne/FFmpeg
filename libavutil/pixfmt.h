@@ -501,8 +501,7 @@ enum AVPixelFormat {
 
     /**
      * Envideo hardware surfaces
-     *
-     * data[0] points to an AVEnvideoFrame
+     * data[i] contain GPU virtual addresses, buf[0] points to an AVEnvideoFrame
      */
     AV_PIX_FMT_ENVIDEO,
 

@@ -124,8 +124,8 @@ static void envideo_mpeg12_prepare_frame_setup(nvdec_mpeg2_pic_s *setup, MpegEnc
         .concealment_motion_vectors = s->concealment_motion_vectors,
         .intra_vlc_format           = s->intra_vlc_format,
 
-        .tileFormat                 = 0, /* TBL */
-        .gob_height                 = 0, /* GOB_2 */
+        .tileFormat                 = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
+        .gob_height                 = 0,                           /* GOB_2 */
 
         .f_code                     = {
             s->mpeg_f_code[0][0], s->mpeg_f_code[0][1],

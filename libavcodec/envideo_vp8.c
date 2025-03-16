@@ -183,8 +183,8 @@ static void envideo_vp8_prepare_frame_setup(nvdec_vp8_pic_s *setup, VP8Context *
         .keyFrame                         = h->keyframe,
         .version                          = h->profile,
 
-        .tileFormat                       = 0, /* TBL */
-        .gob_height                       = 0, /* GOB_2 */
+        .tileFormat                       = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
+        .gob_height                       = 0,                           /* GOB_2 */
 
         .errorConcealOn                   = 1,
 

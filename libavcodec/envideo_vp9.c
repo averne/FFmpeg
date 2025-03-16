@@ -388,8 +388,8 @@ static void envideo_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecConte
     *setup = (nvdec_vp9_pic_s){
         .gptimer_timeout_value    = 0, /* Default value */
 
-        .tileformat               = 0, /* TBL */
-        .gob_height               = 0, /* GOB_2 */
+        .tileformat               = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
+        .gob_height               = 0,                           /* GOB_2 */
 
         .Vp9BsdCtrlOffset         = FFALIGN(avctx->height, 64) * 912 / 256,
 

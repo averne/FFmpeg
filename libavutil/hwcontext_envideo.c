@@ -159,7 +159,7 @@ static AVBufferRef *envideo_pool_alloc(void *opaque, size_t size) {
         goto fail;
 
     err = envideo_map_create(hwctx->device, &frame->map, size, ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageFramebuffer);
+                             EnvideoMap_CpuUnmapped | EnvideoMap_GpuCacheable | EnvideoMap_UsageFramebuffer);
     if (err < 0)
         goto fail;
 
@@ -207,6 +207,7 @@ static int envideo_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(ctx->sw_format);
 
     AVEnvideoFrame *f;
+    uint8_t *addr;
     uint32_t width_aligned, height_aligned;
     int bpp, err;
 
@@ -222,7 +223,8 @@ static int envideo_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
     width_aligned  = FFALIGN(ctx->width,  ENVIDEO_WIDTH_ALIGN (bpp));
     height_aligned = FFALIGN(ctx->height, ENVIDEO_HEIGHT_ALIGN(bpp));
 
-    err = av_image_fill_arrays(frame->data, frame->linesize, envideo_map_get_cpu_addr(f->map),
+    addr = (uint8_t *)(uintptr_t)envideo_map_get_gpu_addr(f->map);
+    err = av_image_fill_arrays(frame->data, frame->linesize, addr,
                                ctx->sw_format, width_aligned, height_aligned,
                                ENVIDEO_WIDTH_ALIGN(bpp));
     if (err < 0)

@@ -328,8 +328,8 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     *setup = (nvdec_hevc_pic_s){
         .gptimer_timeout_value                       = 0, /* Default value */
 
-        .tileformat                                  = 0, /* TBL */
-        .gob_height                                  = 0, /* GOB_2 */
+        .tileformat                                  = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
+        .gob_height                                  = 0,                           /* GOB_2 */
 
         .sw_start_code_e                             = 1,
         .disp_output_mode                            = output_mode,

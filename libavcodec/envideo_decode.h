@@ -53,6 +53,7 @@ typedef struct FFEnvideoDecodeContextShared {
     AVBufferRef *hw_device_ref;
     AVEnvideoJobPool pool;
 
+    bool is_tegra;
     bool is_nvjpg;
     EnvideoChannel *channel;
 

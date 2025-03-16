@@ -136,7 +136,7 @@ static int envideo_mpeg4_decode_init(AVCodecContext *avctx) {
     common_map_size = FFALIGN(ss->scratch_off + scratch_size, 0x1000);
 
     err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
+                             EnvideoMap_CpuUnmapped | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 
@@ -173,8 +173,8 @@ static void envideo_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecC
         .vop_time_increment_bitcount  = m->time_increment_bits,
         .resync_marker_disable        = !m->resync_marker,
 
-        .tileFormat                   = 0, /* TBL */
-        .gob_height                   = 0, /* GOB_2 */
+        .tileFormat                   = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
+        .gob_height                   = 0,                           /* GOB_2 */
 
         .width                        = FFALIGN(s->width,  MB_SIZE),
         .height                       = FFALIGN(s->height, MB_SIZE),
