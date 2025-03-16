@@ -150,12 +150,12 @@ static int envideo_hevc_decode_init(AVCodecContext *avctx) {
     sao_above_size  = FFALIGN(a * b * 0x300,           ENVIDEO_MAP_ALIGN);
     slice_edge_size = ENVIDEO_MAP_ALIGN;
 
-    ss->col_mv_size       =  col_mv_size                            / 256;
-    ss->sao_offset        =  something_size                         / 256;
-    ss->bsd_offset        = (ss->sao_offset       + sao_size)       / 256;
-    ss->flt_above_offset  = (ss->bsd_offset       + bsd_size)       / 256;
-    ss->sao_above_offset  = (ss->flt_above_offset + flt_above_size) / 256;
-    ss->slice_edge_offset = (ss->sao_above_offset + sao_above_size) / 256;
+    ss->col_mv_size       = col_mv_size                           / 256;
+    ss->sao_offset        = something_size                        / 256;
+    ss->bsd_offset        = ss->sao_offset       + sao_size       / 256;
+    ss->flt_above_offset  = ss->bsd_offset       + bsd_size       / 256;
+    ss->sao_above_offset  = ss->flt_above_offset + flt_above_size / 256;
+    ss->slice_edge_offset = ss->sao_above_offset + sao_above_size / 256;
 
     coloc_size  = col_mv_size * 17;
     filter_size = something_size + sao_size       + bsd_size +
@@ -317,29 +317,31 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
     enum RPSType st;
     uint8_t *mem;
     uint16_t *tile_sizes;
-    int output_mode, cur_frame, scratch_ref_diff_poc, i, j;
+    int output_mode, chroma_format, cur_frame, scratch_ref_diff_poc, i, j;
     int8_t rps_stcurrbef[8], rps_stcurraft[8], rps_ltcurr[8];
 
     mem = envideo_map_get_cpu_addr(input_map);
 
     /* Match source color depth regardless of colorspace */
-    if (frames_ctx->sw_format == AV_PIX_FMT_P010 && sps->bit_depth == 10) {
-        output_mode = 1;                /* 10-bit bt709 */
-    } else {
-        if (sps->bit_depth == 8) {
-            output_mode = 0;            /* 8-bit bt709 */
-        } else {
-            switch (avctx->colorspace) {
-                default:
-                case AVCOL_SPC_BT709:
-                    output_mode = 2;    /* 10-bit bt709 truncated to 8-bit */
-                    break;
-                case AVCOL_SPC_BT2020_CL:
-                case AVCOL_SPC_BT2020_NCL:
-                    output_mode = 3;    /* 10-bit bt2020 truncated to 8-bit */
-                    break;
-            }
-        }
+    output_mode = (sps->bit_depth == 8) ? 0 : 1; /* 8-bit bt709, 10-bit bt709 */
+
+    switch (frames_ctx->sw_format) {
+        default:
+        case AV_PIX_FMT_NV12:
+        case AV_PIX_FMT_P010LE:
+        case AV_PIX_FMT_P012LE:
+            chroma_format = 1; /* 4:2:0 */
+            break;
+        case AV_PIX_FMT_NV16:
+        case AV_PIX_FMT_P210LE:
+        case AV_PIX_FMT_P212LE:
+            chroma_format = 2; /* 4:2:2 */
+            break;
+        case AV_PIX_FMT_NV24:
+        case AV_PIX_FMT_P410LE:
+        case AV_PIX_FMT_P412LE:
+            chroma_format = 3; /* 4:4:4 */
+            break;
     }
 
     *setup = (nvdec_hevc_pic_s){
@@ -364,7 +366,7 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         .pic_width_in_luma_samples                   = sps->width,
         .pic_height_in_luma_samples                  = sps->height,
 
-        .chroma_format_idc                           = 1, /* 4:2:0 */
+        .chroma_format_idc                           = chroma_format,
         .bit_depth_luma                              = sps->bit_depth,
         .bit_depth_chroma                            = sps->bit_depth,
         .log2_min_luma_coding_block_size             = sps->log2_min_cb_size,

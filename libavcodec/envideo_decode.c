@@ -487,7 +487,7 @@ int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
                     frames_ctx->sw_format = AV_PIX_FMT_YUV440P;
                     break;
                 case EnvideoSubsampling_444:
-                    frames_ctx->sw_format = AV_PIX_FMT_YUV444P;
+                    frames_ctx->sw_format = AV_PIX_FMT_NV24;
                     break;
             }
             break;
@@ -503,7 +503,7 @@ int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
                     frames_ctx->sw_format = AV_PIX_FMT_P210LE;
                     break;
                 case EnvideoSubsampling_444:
-                    frames_ctx->sw_format = AV_PIX_FMT_YUV444P10LE;
+                    frames_ctx->sw_format = AV_PIX_FMT_P410LE;
                     break;
             }
             break;
@@ -519,7 +519,7 @@ int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
                     frames_ctx->sw_format = AV_PIX_FMT_P212LE;
                     break;
                 case EnvideoSubsampling_444:
-                    frames_ctx->sw_format = AV_PIX_FMT_YUV444P12LE;
+                    frames_ctx->sw_format = AV_PIX_FMT_P412LE;
                     break;
             }
             break;
