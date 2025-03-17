@@ -37,7 +37,8 @@
 typedef struct EnvideoVP94DecodeContextShared {
     EnvideoMap *common_map;
     uint32_t segment_rw1_off, segment_rw2_off, tile_sizes_off, filter_off,
-             col_mvrw1_off, col_mvrw2_off, ctx_counter_off;
+             col_mvrw1_off, col_mvrw2_off, ctx_counter_off, intra_top_off,
+             bsd_ctrl_off, flt_above_off;
     uint32_t prob_tab_off;
 } EnvideoVP9DecodeContextShared;
 
@@ -94,8 +95,9 @@ static int envideo_vp9_decode_init(AVCodecContext *avctx) {
     AVEnvideoDeviceContext *device_hwctx;
     EnvideoVP9DecodeContextShared *ss;
     FFEnvideoDecodeContextShared *sc;
-    uint32_t aligned_width, aligned_height, max_sb_size,
-             segment_rw_size, filter_size, col_mvrw_size, ctx_counter_size,
+    uint32_t aligned_width, aligned_height, sb_size,
+             segment_rw_size, col_mvrw_size, ctx_counter_size,
+             something_size, bsd_ctrl_size, flt_above_size, filter_size,
              common_map_size;
     uint8_t *mem;
     int err;
@@ -137,13 +139,20 @@ static int envideo_vp9_decode_init(AVCodecContext *avctx) {
     hw_device_ctx = (AVHWDeviceContext *)sc->hw_device_ref->data;
     device_hwctx  = hw_device_ctx->hwctx;
 
-    aligned_width    = FFALIGN(avctx->coded_width,  MB_SIZE);
-    aligned_height   = FFALIGN(avctx->coded_height, MB_SIZE);
-    max_sb_size      = CEILDIV(aligned_width, 0x40) * CEILDIV(aligned_height, 0x40);
-    segment_rw_size  = FFALIGN(max_sb_size * 0x20, 0x100);
-    filter_size      = FFALIGN(avctx->height, 0x40) * 988;
-    col_mvrw_size    = max_sb_size * 0x400;
-    ctx_counter_size = FFALIGN(sizeof(nvdec_vp9EntropyCounts_t), 0x100);
+    aligned_width  = FFALIGN(avctx->coded_width,  SB_SIZE);
+    aligned_height = FFALIGN(avctx->coded_height, SB_SIZE);
+
+    sb_size          = (aligned_width / SB_SIZE) * (aligned_height / SB_SIZE);
+    segment_rw_size  = FFALIGN(sb_size * 0x20,                   ENVIDEO_MAP_ALIGN);
+    something_size   = FFALIGN(aligned_height * 0x390,           ENVIDEO_MAP_ALIGN);
+    bsd_ctrl_size    = FFALIGN(aligned_height / 4 * 0x130,       ENVIDEO_MAP_ALIGN);
+    flt_above_size   = FFALIGN(aligned_width / SB_SIZE * 0x1690, ENVIDEO_MAP_ALIGN);
+    filter_size      = something_size + bsd_ctrl_size + flt_above_size;
+    col_mvrw_size    = sb_size * 0x400;
+    ctx_counter_size = FFALIGN(sizeof(nvdec_vp9EntropyCounts_t), ENVIDEO_MAP_ALIGN);
+
+    ss->bsd_ctrl_off  = something_size                   / 256;
+    ss->flt_above_off = ss->bsd_ctrl_off + bsd_ctrl_size / 256;
 
     ss->segment_rw1_off = 0;
     ss->segment_rw2_off = FFALIGN(ss->segment_rw1_off + segment_rw_size,  ENVIDEO_MAP_ALIGN);
@@ -152,7 +161,8 @@ static int envideo_vp9_decode_init(AVCodecContext *avctx) {
     ss->col_mvrw1_off   = FFALIGN(ss->filter_off      + filter_size,      ENVIDEO_MAP_ALIGN);
     ss->col_mvrw2_off   = FFALIGN(ss->col_mvrw1_off   + col_mvrw_size,    ENVIDEO_MAP_ALIGN);
     ss->ctx_counter_off = FFALIGN(ss->col_mvrw2_off   + col_mvrw_size,    ENVIDEO_MAP_ALIGN);
-    common_map_size     = FFALIGN(ss->ctx_counter_off + ctx_counter_size, 0x1000);
+    ss->intra_top_off   = FFALIGN(ss->ctx_counter_off + ctx_counter_size, ENVIDEO_MAP_ALIGN);
+    common_map_size     = FFALIGN(ss->intra_top_off   + 0x10000,          0x1000);
 
     err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
                              EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
@@ -380,10 +390,9 @@ static void envideo_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecConte
 
     int i;
 
-    /* Note: the stride is divided by 2 when the depth is > 8 (not supported on T210) */
-#define FWIDTH(f)      ((f && f->private_ref) ? f->width       : 0)
-#define FHEIGHT(f)     ((f && f->private_ref) ? f->height      : 0)
-#define FSTRIDE(f, c)  ((f && f->private_ref) ? f->linesize[c] : 0)
+#define FWIDTH(f)      ((f && f->private_ref) ? f->width                                 : 0)
+#define FHEIGHT(f)     ((f && f->private_ref) ? f->height                                : 0)
+#define FSTRIDE(f, c)  ((f && f->private_ref) ? f->linesize[c] / (h->h.bpp == 8 ? 1 : 2) : 0)
 
     *setup = (nvdec_vp9_pic_s){
         .gptimer_timeout_value    = 0, /* Default value */
@@ -391,7 +400,7 @@ static void envideo_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecConte
         .tileformat               = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
         .gob_height               = 0,                           /* GOB_2 */
 
-        .Vp9BsdCtrlOffset         = FFALIGN(avctx->height, 64) * 912 / 256,
+        .Vp9BsdCtrlOffset         = ctx->shared->bsd_ctrl_off,
 
         .ref0_width               = FWIDTH (h->refs[h->h.refidx[0]].f),
         .ref0_height              = FHEIGHT(h->refs[h->h.refidx[0]].f),
@@ -466,6 +475,13 @@ static void envideo_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecConte
         .mbModeLfDelta            = {
             h->h.lf_delta.mode[0], h->h.lf_delta.mode[1],
         },
+
+        .v1 = {
+            .Vp9FltAboveOffset    = ctx->shared->flt_above_off,
+            .external_ref_mem_dis = 0,
+            .bit_depth            = h->h.bpp,
+            .error_external_mv_en = 0,
+        },
     };
 
     for (i = 0; i < 8; ++i) {
@@ -526,6 +542,7 @@ static int envideo_vp9_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP9SharedContext *h
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_SEGMENT_READ_BUF_OFFSET,  ss->common_map, ss->segment_rw1_off);
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_SEGMENT_WRITE_BUF_OFFSET, ss->common_map, ss->segment_rw2_off);
     FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_VP9_SET_FILTER_BUFFER_OFFSET,     ss->common_map, ss->filter_off);
+    FF_ENVIDEO_PUSH_RELOC(cmdbuf, NVC9B0_SET_INTRA_TOP_BUF_OFFSET,         ss->common_map, ss->intra_top_off);
 
 #define PUSH_FRAME(fr, offset) ({                                                               \
     FF_ENVIDEO_PUSH_RELOC_TILED(cmdbuf, NVC9B0_SET_PICTURE_LUMA_OFFSET0   + offset * 4,         \
