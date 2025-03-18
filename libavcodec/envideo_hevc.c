@@ -221,22 +221,27 @@ static void envideo_hevc_set_scaling_list(nvdec_hevc_scaling_list_s *list, HEVCC
     const ScalingList *sl = s->pps->scaling_list_data_present_flag ?
                             &s->pps->scaling_list : &s->pps->sps->scaling_list;
 
-    int i;
+    int i, j, k;
 
     for (i = 0; i < FF_ARRAY_ELEMS(list->ScalingListDCCoeff16x16); ++i)
         list->ScalingListDCCoeff16x16[i] = sl->sl_dc[0][i];
     for (i = 0; i < FF_ARRAY_ELEMS(list->ScalingListDCCoeff32x32); ++i)
         list->ScalingListDCCoeff32x32[i] = sl->sl_dc[1][i * 3];
 
-    for (i = 0; i < 6; ++i)
-        memcpy(list->ScalingList4x4  [i], sl->sl[0][i], 16);
-    for (i = 0; i < 6; ++i)
-        memcpy(list->ScalingList8x8  [i], sl->sl[1][i], 64);
-    for (i = 0; i < 6; ++i)
-        memcpy(list->ScalingList16x16[i], sl->sl[2][i], 64);
+#define COPY_LIST(dst, src, n) ({                    \
+    for (j = 0; j < (n); ++j)                        \
+        for (k = 0; k < (n); ++k)                    \
+            (dst)[k * (n) + j] = (src)[j * (n) + k]; \
+})
 
-    memcpy(list->ScalingList32x32[0], sl->sl[3][0], 64);
-    memcpy(list->ScalingList32x32[1], sl->sl[3][3], 64);
+    for (i = 0; i < 6; ++i) {
+        COPY_LIST(list->ScalingList4x4  [i], sl->sl[0][i], 4);
+        COPY_LIST(list->ScalingList8x8  [i], sl->sl[1][i], 8);
+        COPY_LIST(list->ScalingList16x16[i], sl->sl[2][i], 8);
+    }
+
+    COPY_LIST(list->ScalingList32x32[0], sl->sl[3][0], 8);
+    COPY_LIST(list->ScalingList32x32[1], sl->sl[3][3], 8);
 }
 
 static void envideo_hevc_set_tile_sizes(uint16_t *sizes, HEVCContext *s) {
@@ -368,7 +373,7 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
 
         .chroma_format_idc                           = chroma_format,
         .bit_depth_luma                              = sps->bit_depth,
-        .bit_depth_chroma                            = sps->bit_depth,
+        .bit_depth_chroma                            = sps->bit_depth_chroma,
         .log2_min_luma_coding_block_size             = sps->log2_min_cb_size,
         .log2_max_luma_coding_block_size             = sps->log2_diff_max_min_coding_block_size + sps->log2_min_cb_size,
         .log2_min_transform_block_size               = sps->log2_min_tb_size,
