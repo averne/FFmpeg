@@ -191,8 +191,52 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
         return AVERROR(EINVAL);
 
     /**
+     * When decoding interlaced content, both fields share the same fdd.
+     * This is a problem for us, as moving forward would overwrite structures
+     * required for the decoding of the first in-flight field.
+     * Thus, access to the fdd is locked behind a mutex, released after job submission.
+     * Likewise, decoding of the first field must be complete before proceeding.
+     * Finally, in the case of multithreaded decoding, there is a race on the fdd allocation
+     * which must be guarded against.
+     * Contention should never happen for progressive content.
+     */
+
+    if (fdd->hwaccel_priv) {
+wait_interlaced:
+        tf = fdd->hwaccel_priv;
+        ff_mutex_lock(&tf->mtx);
+
+        err = ff_envideo_wait_decode(avctx, frame);
+        if (err < 0)
+            return err;
+    } else {
+        tf = av_mallocz(sizeof(*tf));
+        if (!tf)
+            return AVERROR(ENOMEM);
+
+        ff_mutex_lock(&tf->mtx);
+
+        /* We lost the race, free the fdd and wait for the former field to complete */
+        if (fdd->hwaccel_priv) {
+            av_freep(&tf);
+            goto wait_interlaced;
+        }
+
+        fdd->hwaccel_priv      = tf;
+        fdd->hwaccel_priv_free = envideo_fdd_priv_free;
+
+        tf->ctx = ctx;
+
+        tf->operation.job_ref = av_envideo_job_pool_get(&sc->pool, &new_buffer);
+        if (!tf->operation.job_ref) {
+            err = AVERROR(ENOMEM);
+            goto fail;
+        }
+    }
+
+    /**
      * Free up input buffers from the pool if the associated job is completed.
-     * Simultaneously, check for the statuses of the decoding operations,
+     * Simultaneously, check for the status of the decoding operations,
      * and update the frequency scaling state.
      */
     for (i = 0; i < ctx->num_operations; ++i) {
@@ -238,32 +282,6 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
     err = envideo_dfs_commit(sc->channel);
     if (err < 0)
         return err;
-
-    if (fdd->hwaccel_priv) {
-        /**
-         * For interlaced video, both fields use the same fdd,
-         * however by proceeding we might overwrite the input buffer
-         * during the decoding, so wait for the previous operation to complete.
-         */
-       err = ff_envideo_wait_decode(avctx, frame);
-        if (err < 0)
-            return err;
-    } else {
-        tf = av_mallocz(sizeof(*tf));
-        if (!tf)
-            return AVERROR(ENOMEM);
-
-        fdd->hwaccel_priv      = tf;
-        fdd->hwaccel_priv_free = envideo_fdd_priv_free;
-
-        tf->ctx = ctx;
-
-        tf->operation.job_ref = av_envideo_job_pool_get(&sc->pool, &new_buffer);
-        if (!tf->operation.job_ref) {
-            err = AVERROR(ENOMEM);
-            goto fail;
-        }
-    }
 
     tf = fdd->hwaccel_priv;
     tf->in_flight        = false;
@@ -372,8 +390,10 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeC
 
     if (i == ctx->num_operations) {
         ctx->operations = av_realloc_array(ctx->operations, ctx->num_operations + 1, sizeof(FFEnvideoOperation));
-        if (!ctx->operations)
-            return AVERROR(ENOMEM);
+        if (!ctx->operations) {
+            err = AVERROR(ENOMEM);
+            goto fail;
+        }
 
         ctx->operations[ctx->num_operations++] = (FFEnvideoOperation){0};
     }
@@ -382,13 +402,13 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeC
 
     err = envideo_channel_submit(sc->channel, job->cmdbuf, &tf->operation.fence);
     if (err < 0)
-        return err;
+        goto fail;
 
     tf->in_flight = true;
 
     err = av_buffer_replace(&op->job_ref, tf->operation.job_ref);
     if (err < 0)
-        return err;
+        goto fail;
 
     op->fence         = tf->operation.fence;
     op->bitstream_len = tf->operation.bitstream_len;
@@ -396,7 +416,11 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeC
 
     ctx->frame_idx++;
 
-    return 0;
+    err = 0;
+
+fail:
+    ff_mutex_unlock(&tf->mtx);
+    return err;
 }
 
 int ff_envideo_update_thread_context(FFEnvideoDecodeContext *dst, const FFEnvideoDecodeContext *src) {

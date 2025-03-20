@@ -32,6 +32,7 @@
 #include <envideo/classes/nvjpg_drv.h>
 
 #include "avcodec.h"
+#include "libavutil/thread.h"
 #include "libavutil/hwcontext_envideo.h"
 
 typedef struct FFEnvideoDecodeContext FFEnvideoDecodeContext;
@@ -46,6 +47,7 @@ typedef struct FFEnvideoOperation {
 typedef struct FFEnvideoDecodeFrame {
     FFEnvideoDecodeContext *ctx;
     FFEnvideoOperation operation;
+    AVMutex mtx;
     bool in_flight, new_input_buffer;
 } FFEnvideoDecodeFrame;
 
