@@ -58,11 +58,11 @@ static int envideo_vp8_decode_uninit(AVCodecContext *avctx) {
 
     av_log(avctx, AV_LOG_DEBUG, "Deinitializing vp8-envideo decoder\n");
 
-    av_refstruct_unref(&ctx->shared);
-
     err = ff_envideo_decode_uninit(avctx, &ctx->core);
     if (err < 0)
         return err;
+
+    av_refstruct_unref(&ctx->shared);
 
     return 0;
 }
