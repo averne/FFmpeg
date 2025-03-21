@@ -27,6 +27,7 @@
 #include "hwaccel_internal.h"
 #include "internal.h"
 #include "hwconfig.h"
+#include "mpegutils.h"
 #include "mpeg4video.h"
 #include "mpeg4videodec.h"
 #include "mpeg4videodefs.h"
@@ -50,6 +51,8 @@ typedef struct EnvideoMPEG4DecodeContext {
 
 /* Size (width, height) of a macroblock */
 #define MB_SIZE 16
+
+#define SECOND_FIELD(s) ((s)->picture_structure != PICT_FRAME && !(s)->first_field)
 
 static const uint8_t bitstream_end_sequence[16] = {
     0x00, 0x00, 0x01, 0xb1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xb1, 0x00, 0x00, 0x00, 0x00,
@@ -224,9 +227,8 @@ static int envideo_mpeg4_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MpegEncContext *s
 {
     EnvideoMPEG4DecodeContextShared *ss = ctx->shared;
     FFEnvideoDecodeContextShared    *sc = ctx->core.shared;
-    FrameDecodeData                *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame            *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                   *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField         *field = ff_envideo_get_priv(cur_frame, SECOND_FIELD(s));
+    AVEnvideoJob                   *job = (AVEnvideoJob *)field->operation.job_ref->data;
     EnvideoMap               *input_map = job->input_map;
 
     int err;
@@ -277,10 +279,9 @@ static int envideo_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
     Mpeg4DecContext             *m = avctx->priv_data;
     MpegEncContext              *s = &m->m;
     AVFrame                 *frame = s->cur_pic.ptr->f;
-    FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
     EnvideoMPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    FFEnvideoDecodeFrame *tf;
+    FFEnvideoDecodeField *field;
     AVEnvideoJob *job;
     uint8_t *mem;
     int err;
@@ -288,13 +289,13 @@ static int envideo_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
     av_log(avctx, AV_LOG_DEBUG, "Starting mpeg4-envideo frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
 
-    err = ff_envideo_start_frame(avctx, frame, &ctx->core);
+    err = ff_envideo_start_frame(avctx, frame, SECOND_FIELD(s), &ctx->core);
     if (err < 0)
         return err;
 
-    tf  = fdd->hwaccel_priv;
-    job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    mem = envideo_map_get_cpu_addr(job->input_map);
+    field = ff_envideo_get_priv(frame, SECOND_FIELD(s));
+    job   = (AVEnvideoJob *)field->operation.job_ref->data;
+    mem   = envideo_map_get_cpu_addr(job->input_map);
 
     envideo_mpeg4_prepare_frame_setup((nvdec_mpeg4_pic_s *)(mem + ctx->core.shared->pic_setup_off), avctx, ctx);
 
@@ -310,32 +311,36 @@ static int envideo_mpeg4_end_frame(AVCodecContext *avctx) {
     EnvideoMPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                 *frame = s->cur_pic.ptr->f;
     FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame       *tf = fdd->hwaccel_priv;
-    AVEnvideoJob              *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField    *field = ff_envideo_get_priv(frame, SECOND_FIELD(s));
 
+    AVEnvideoJob *job;
+    FFEnvideoOperation *op;
     nvdec_mpeg4_pic_s *setup;
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending mpeg4-envideo frame with %u slices -> %u bytes\n",
-           tf->operation.num_slices, tf->operation.bitstream_len);
-
-    if (!tf || !tf->operation.num_slices)
+    if (!fdd || !field)
         return 0;
+
+    job = (AVEnvideoJob *)field->operation.job_ref->data;
+    op  = &field->operation;
+
+    av_log(avctx, AV_LOG_DEBUG, "Ending mpeg4-envideo frame with %u slices -> %u bytes\n",
+           op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvdec_mpeg4_pic_s *)(mem + ctx->core.shared->pic_setup_off);
-    setup->stream_len  = tf->operation.bitstream_len + sizeof(bitstream_end_sequence);
-    setup->slice_count = tf->operation.num_slices;
+    setup->stream_len  = op->bitstream_len + sizeof(bitstream_end_sequence);
+    setup->slice_count = op->num_slices;
 
     err = envideo_mpeg4_prepare_cmdbuf(job->cmdbuf, s, ctx, frame,
                                        ctx->prev_frame, ctx->next_frame);
     if (err < 0)
         return err;
 
-    return ff_envideo_end_frame(avctx, frame, &ctx->core, bitstream_end_sequence,
-                                sizeof(bitstream_end_sequence));
+    return ff_envideo_end_frame(avctx, frame, false, &ctx->core,
+                                bitstream_end_sequence, sizeof(bitstream_end_sequence));
 }
 
 static int envideo_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
@@ -353,7 +358,7 @@ static int envideo_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     while (*(uint32_t *)buf != AV_BE2NE32C(VOP_STARTCODE))
         buf += 1, buf_size -= 1;
 
-    return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
+    return ff_envideo_decode_slice(avctx, frame, SECOND_FIELD(s), buf, buf_size, false);
 }
 
 static int envideo_mpeg4_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {

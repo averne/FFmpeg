@@ -213,9 +213,8 @@ static int envideo_mjpeg_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MJpegDecodeContex
                                         EnvideoMJPEGDecodeContext *ctx, AVFrame *current_frame)
 {
     FFEnvideoDecodeContextShared *sc = ctx->core.shared;
-    FrameDecodeData             *fdd = (FrameDecodeData *)current_frame->private_ref->data;
-    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField      *field = ff_envideo_get_priv(current_frame, false);
+    AVEnvideoJob                *job = (AVEnvideoJob *)field->operation.job_ref->data;
     EnvideoMap            *input_map = job->input_map;
 
     int err;
@@ -265,7 +264,7 @@ static int envideo_mjpeg_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
     av_log(avctx, AV_LOG_DEBUG, "Starting mjpeg-envideo frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
 
-    err = ff_envideo_start_frame(avctx, frame, &ctx->core);
+    err = ff_envideo_start_frame(avctx, frame, false, &ctx->core);
     if (err < 0)
         return err;
 
@@ -279,25 +278,25 @@ static int envideo_mjpeg_end_frame(AVCodecContext *avctx) {
     AVFrame                   *frame = s->picture;
     AVEnvideoFrame          *enframe = (AVEnvideoFrame *)frame->buf[0]->data;
     FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField      *field = ff_envideo_get_priv(frame, false);
 
-
+    AVEnvideoJob *job;
+    FFEnvideoOperation *op;
     nvjpg_dec_drv_pic_setup_s *setup;
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending mjpeg-envideo frame with %u slices -> %u bytes\n",
-           tf->operation.num_slices, tf->operation.bitstream_len);
-
-    if (!tf || !tf->operation.num_slices)
+    if (!fdd || !field)
         return 0;
+
+    av_log(avctx, AV_LOG_DEBUG, "Ending mjpeg-envideo frame with %u slices -> %u bytes\n",
+        op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvjpg_dec_drv_pic_setup_s *)(mem + sc->pic_setup_off);
     setup->bitstream_offset = 0;
-    setup->bitstream_size   = tf->operation.bitstream_len;
+    setup->bitstream_size   = op->bitstream_len;
 
     err = envideo_mjpeg_prepare_cmdbuf(job->cmdbuf, s, ctx, frame);
     if (err < 0)
@@ -305,7 +304,7 @@ static int envideo_mjpeg_end_frame(AVCodecContext *avctx) {
 
     enframe->is_pitch = true;
 
-    return ff_envideo_end_frame(avctx, frame, &ctx->core, NULL, 0);
+    return ff_envideo_end_frame(avctx, frame, false, &ctx->core, NULL, 0);
 }
 
 static int envideo_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
@@ -313,19 +312,17 @@ static int envideo_mjpeg_decode_slice(AVCodecContext *avctx, const uint8_t *buf,
     EnvideoMJPEGDecodeContext   *ctx = avctx->internal->hwaccel_priv_data;
     FFEnvideoDecodeContextShared *sc = ctx->core.shared;
     AVFrame                   *frame = s->picture;
-    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField      *field = ff_envideo_get_priv(frame, false);
+    AVEnvideoJob                *job = (AVEnvideoJob *)field->operation.job_ref->data;
 
     uint8_t *mem;
 
-    tf = fdd->hwaccel_priv;
     mem = envideo_map_get_cpu_addr(job->input_map);
 
     /* The JFIF headers haven't been entirely parsed yet when the start_frame callback is invoked */
     envideo_mjpeg_prepare_frame_setup((nvjpg_dec_drv_pic_setup_s *)(mem + sc->pic_setup_off), s, ctx);
 
-    return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
+    return ff_envideo_decode_slice(avctx, frame, false, buf, buf_size, false);
 }
 
 static int envideo_mjpeg_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {

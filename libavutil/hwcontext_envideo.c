@@ -262,7 +262,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
 
     bool from;
     const AVFrame *swframe, *hwframe;
-    AVEnvideoFrame *enframe;
+    AVEnvideoFrame *evframe;
     const AVPixFmtDescriptor *desc;
     EnvideoMap *maps[4] = {0};
     uint8_t *map_bases[4];
@@ -276,7 +276,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
 
     from    = !dst->hw_frames_ctx;
     swframe = from ? dst : src, hwframe = from ? src : dst;
-    enframe = (AVEnvideoFrame *)hwframe->buf[0]->data;
+    evframe = (AVEnvideoFrame *)hwframe->buf[0]->data;
 
     if (swframe->hw_frames_ctx)
         return AVERROR(ENOSYS);
@@ -340,7 +340,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
         if (err < 0)
             return err;
 
-        err = envideo_cmdbuf_wait_fence(job->cmdbuf, enframe->fence);
+        err = envideo_cmdbuf_wait_fence(job->cmdbuf, evframe->fence);
         if (err < 0)
             return err;
 
@@ -356,7 +356,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
             .width      = AV_CEIL_RSHIFT(src->width,  i ? desc->log2_chroma_w : 0) * plane_bpp[i],
             .height     = AV_CEIL_RSHIFT(src->height, i ? desc->log2_chroma_h : 0),
             .stride     = src->linesize[i],
-            .tiled      = from && !enframe->is_pitch,
+            .tiled      = from && !evframe->is_pitch,
             .gob_height = from ? 2 : 0, /* Engine code assumes GOB_HEIGHT = 2 */
         };
 
@@ -366,7 +366,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
             .width      = AV_CEIL_RSHIFT(dst->width,  i ? desc->log2_chroma_w : 0) * plane_bpp[i],
             .height     = AV_CEIL_RSHIFT(dst->height, i ? desc->log2_chroma_h : 0),
             .stride     = dst->linesize[i],
-            .tiled      = !from && !enframe->is_pitch,
+            .tiled      = !from && !evframe->is_pitch,
             .gob_height = !from ? 2 : 0, /* Engine code assumes GOB_HEIGHT = 2 */
         };
 
@@ -376,11 +376,11 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
     }
 
     /* L2 cache flush will be performed by the kernel during map teardown */
-    err = envideo_channel_submit(priv->copy_channel, job->cmdbuf, &enframe->fence);
+    err = envideo_channel_submit(priv->copy_channel, job->cmdbuf, &evframe->fence);
     if (err)
         goto fail;
 
-    err = envideo_fence_wait(hwctx->device, enframe->fence, UINT64_MAX);
+    err = envideo_fence_wait(hwctx->device, evframe->fence, UINT64_MAX);
 
 fail:
     av_buffer_unref(&job_ref);

@@ -54,6 +54,8 @@ typedef struct EnvideoVC1DecodeContext {
 /* Size (width, height) of a macroblock */
 #define MB_SIZE 16
 
+#define SECOND_FIELD(v) ((v)->second_field)
+
 static const uint8_t bitstream_end_sequence[] = {
     0x00, 0x00, 0x01, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00, 0x00, 0x00,
 };
@@ -279,9 +281,8 @@ static int envideo_vc1_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VC1Context *v, Envi
 {
     EnvideoVC1DecodeContextShared *ss = ctx->shared;
     FFEnvideoDecodeContextShared  *sc = ctx->core.shared;
-    FrameDecodeData              *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame          *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                 *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField       *field = ff_envideo_get_priv(cur_frame, SECOND_FIELD(v));
+    AVEnvideoJob                 *job = (AVEnvideoJob *)field->operation.job_ref->data;
     EnvideoMap             *input_map = job->input_map;
 
     int err;
@@ -333,10 +334,9 @@ static int envideo_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     VC1Context                *v = avctx->priv_data;
     MpegEncContext            *s = &v->s;
     AVFrame               *frame = s->cur_pic.ptr->f;
-    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     EnvideoVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    FFEnvideoDecodeFrame *tf;
+    FFEnvideoDecodeField *field;
     AVEnvideoJob *job;
     uint8_t *mem;
     int err;
@@ -346,13 +346,13 @@ static int envideo_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
 
     ctx->is_first_slice = true;
 
-    err = ff_envideo_start_frame(avctx, frame, &ctx->core);
+    err = ff_envideo_start_frame(avctx, frame, SECOND_FIELD(v), &ctx->core);
     if (err < 0)
         return err;
 
-    tf  = fdd->hwaccel_priv;
-    job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    mem = envideo_map_get_cpu_addr(job->input_map);
+    field = ff_envideo_get_priv(frame, SECOND_FIELD(v));
+    job   = (AVEnvideoJob *)field->operation.job_ref->data;
+    mem   = envideo_map_get_cpu_addr(job->input_map);
 
     envideo_vc1_prepare_frame_setup((nvdec_vc1_pic_s *)(mem + ctx->core.shared->pic_setup_off), avctx, ctx);
 
@@ -367,32 +367,36 @@ static int envideo_vc1_end_frame(AVCodecContext *avctx) {
     EnvideoVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = v->s.cur_pic.ptr->f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame     *tf = fdd->hwaccel_priv;
-    AVEnvideoJob            *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField  *field = ff_envideo_get_priv(frame, SECOND_FIELD(v));
 
+    AVEnvideoJob *job;
+    FFEnvideoOperation *op;
     nvdec_vc1_pic_s *setup;
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending vc1-envideo frame with %u slices -> %u bytes\n",
-           tf->operation.num_slices, tf->operation.bitstream_len);
-
-    if (!tf || !tf->operation.num_slices)
+    if (!fdd || !field)
         return 0;
+
+    job = (AVEnvideoJob *)field->operation.job_ref->data;
+    op  = &field->operation;
+
+    av_log(avctx, AV_LOG_DEBUG, "Ending vc1-envideo frame with %u slices -> %u bytes\n",
+           op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvdec_vc1_pic_s *)(mem + ctx->core.shared->pic_setup_off);
-    setup->stream_len  = tf->operation.bitstream_len + sizeof(bitstream_end_sequence);
-    setup->slice_count = tf->operation.num_slices;
+    setup->stream_len  = op->bitstream_len + sizeof(bitstream_end_sequence);
+    setup->slice_count = op->num_slices;
 
     err = envideo_vc1_prepare_cmdbuf(job->cmdbuf, v, ctx, frame,
                                      ctx->prev_frame, ctx->next_frame);
     if (err < 0)
         return err;
 
-    return ff_envideo_end_frame(avctx, frame, &ctx->core, bitstream_end_sequence,
-                                sizeof(bitstream_end_sequence));
+    return ff_envideo_end_frame(avctx, frame, false, &ctx->core,
+                                bitstream_end_sequence, sizeof(bitstream_end_sequence));
 }
 
 static int envideo_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
@@ -400,9 +404,8 @@ static int envideo_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf, u
     EnvideoVC1DecodeContext     *ctx = avctx->internal->hwaccel_priv_data;
     FFEnvideoDecodeContextShared *sc = ctx->core.shared;
     AVFrame                   *frame = v->s.cur_pic.ptr->f;
-    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField      *field = ff_envideo_get_priv(frame, SECOND_FIELD(v));
+    AVEnvideoJob                *job = (AVEnvideoJob *)field->operation.job_ref->data;
 
     uint8_t *mem;
     enum VC1Code marker;
@@ -412,19 +415,19 @@ static int envideo_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf, u
     if (!ctx->is_first_slice)
         marker = VC1_CODE_SLICE;
     else if (v->profile == PROFILE_ADVANCED &&
-                v->fcm == ILACE_FIELD && v->second_field)
+             v->fcm == ILACE_FIELD && v->second_field)
         marker = VC1_CODE_FIELD;
     else
         marker = VC1_CODE_FRAME;
 
     if (AV_RB32(buf) != marker) {
-        AV_WB32(mem + sc->bitstream_off + tf->operation.bitstream_len, marker);
-        tf->operation.bitstream_len += sizeof(marker);
+        AV_WB32(mem + sc->bitstream_off + field->operation.bitstream_len, marker);
+        field->operation.bitstream_len += sizeof(marker);
     }
 
     ctx->is_first_slice = false;
 
-    return ff_envideo_decode_slice(avctx, frame, buf, buf_size, false);
+    return ff_envideo_decode_slice(avctx, frame, SECOND_FIELD(v), buf, buf_size, false);
 }
 
 static int envideo_vc1_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {

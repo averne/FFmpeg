@@ -504,9 +504,8 @@ static int envideo_vp9_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP9SharedContext *h
 {
     EnvideoVP9DecodeContextShared *ss = ctx->shared;
     FFEnvideoDecodeContextShared  *sc = ctx->core.shared;
-    FrameDecodeData              *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame          *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                 *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField       *field = ff_envideo_get_priv(cur_frame, false);
+    AVEnvideoJob                 *job = (AVEnvideoJob *)field->operation.job_ref->data;
     EnvideoMap             *input_map = job->input_map;
 
     uint32_t col_mvwrite_off, col_mvread_off;
@@ -573,11 +572,10 @@ static int envideo_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     VP9Context                     *s = avctx->priv_data;
     VP9SharedContext               *h = &s->s;
     AVFrame                    *frame = h->frames[CUR_FRAME].tf.f;
-    FrameDecodeData              *fdd = (FrameDecodeData *)frame->private_ref->data;
     EnvideoVP9DecodeContext      *ctx = avctx->internal->hwaccel_priv_data;
     EnvideoVP9DecodeContextShared *ss = ctx->shared;
 
-    FFEnvideoDecodeFrame *tf;
+    FFEnvideoDecodeField *field;
     AVEnvideoJob *job;
     uint8_t *mem, *common_mem;
     int err;
@@ -603,17 +601,17 @@ static int envideo_vp9_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
         s->prob_ctx[s->s.h.framectxid].p = s->prob.p;
     }
 
-    err = ff_envideo_start_frame(avctx, frame, &ctx->core);
+    err = ff_envideo_start_frame(avctx, frame, false, &ctx->core);
     if (err < 0)
         return err;
 
-    tf  = fdd->hwaccel_priv;
-    job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    mem = envideo_map_get_cpu_addr(job->input_map), common_mem = envideo_map_get_cpu_addr(ss->common_map);
+    field = ff_envideo_get_priv(frame, false);
+    job   = (AVEnvideoJob *)field->operation.job_ref->data;
+    mem   = envideo_map_get_cpu_addr(job->input_map), common_mem = envideo_map_get_cpu_addr(ss->common_map);
 
     envideo_vp9_prepare_frame_setup((nvdec_vp9_pic_s *)(mem + ctx->core.shared->pic_setup_off), avctx, ctx);
     envideo_vp9_set_tile_sizes((uint16_t *)(common_mem + ss->tile_sizes_off), s);
-    envideo_vp9_update_probs((nvdec_vp9EntropyProbs_t *)(mem + ss->prob_tab_off), s, tf->new_input_buffer);
+    envideo_vp9_update_probs((nvdec_vp9EntropyProbs_t *)(mem + ss->prob_tab_off), s, field->new_input_buffer);
 
     ctx->refs[0] = ff_envideo_safe_get_ref(h->refs[h->h.refidx[0]].f, h->frames[CUR_FRAME].tf.f);
     ctx->refs[1] = ff_envideo_safe_get_ref(h->refs[h->h.refidx[1]].f, h->frames[CUR_FRAME].tf.f);
@@ -628,29 +626,33 @@ static int envideo_vp9_end_frame(AVCodecContext *avctx) {
     EnvideoVP9DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = h->frames[CUR_FRAME].tf.f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame     *tf = fdd->hwaccel_priv;
-    AVEnvideoJob            *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField  *field = ff_envideo_get_priv(frame, false);
 
+    AVEnvideoJob *job;
+    FFEnvideoOperation *op;
     nvdec_vp9_pic_s *setup;
     uint8_t *mem, *common_mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending vp9-envideo frame with %u slices -> %u bytes\n",
-           tf->operation.num_slices, tf->operation.bitstream_len);
-
-    if (!tf || !tf->operation.num_slices)
+    if (!fdd || !field)
         return 0;
+
+    job = (AVEnvideoJob *)field->operation.job_ref->data;
+    op  = &field->operation;
+
+    av_log(avctx, AV_LOG_DEBUG, "Ending vp9-envideo frame with %u slices -> %u bytes\n",
+        op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvdec_vp9_pic_s *)(mem + ctx->core.shared->pic_setup_off);
-    setup->stream_len = tf->operation.bitstream_len;
+    setup->stream_len = op->bitstream_len;
 
     err = envideo_vp9_prepare_cmdbuf(job->cmdbuf, h, ctx, frame);
     if (err < 0)
         return err;
 
-    err = ff_envideo_end_frame(avctx, frame, &ctx->core, NULL, 0);
+    err = ff_envideo_end_frame(avctx, frame, false, &ctx->core, NULL, 0);
     if (err < 0)
         return err;
 
@@ -680,7 +682,7 @@ static int envideo_vp9_decode_slice(AVCodecContext *avctx, const uint8_t *buf, u
 
     int offset = h->h.uncompressed_header_size + h->h.compressed_header_size;
 
-    return ff_envideo_decode_slice(avctx, frame, buf + offset, buf_size - offset, false);
+    return ff_envideo_decode_slice(avctx, frame, false, buf + offset, buf_size - offset, false);
 }
 
 static int envideo_vp9_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {

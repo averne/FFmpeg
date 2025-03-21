@@ -44,11 +44,14 @@ typedef struct FFEnvideoOperation {
     uint32_t bitstream_len;
 } FFEnvideoOperation;
 
+typedef struct FFEnvideoDecodeField {
+    FFEnvideoOperation operation;
+    bool in_flight, new_input_buffer;
+} FFEnvideoDecodeField;
+
 typedef struct FFEnvideoDecodeFrame {
     FFEnvideoDecodeContext *ctx;
-    FFEnvideoOperation operation;
-    AVMutex mtx;
-    bool in_flight, new_input_buffer;
+    FFEnvideoDecodeField fields[2];
 } FFEnvideoDecodeFrame;
 
 typedef struct FFEnvideoDecodeContextShared {
@@ -109,14 +112,20 @@ static inline AVFrame *ff_envideo_safe_get_ref(AVFrame *ref, AVFrame *fallback) 
     return (ref && ref->private_ref) ? ref : fallback;
 }
 
+static inline FFEnvideoDecodeField *ff_envideo_get_priv(AVFrame *frame, bool second_field) {
+    FrameDecodeData *fdd = (FrameDecodeData *)frame->private_ref->data;
+    return fdd ? &((FFEnvideoDecodeFrame *)fdd->hwaccel_priv)->fields[second_field] : NULL;
+}
+
 int ff_envideo_alloc_shared(FFEnvideoDecodeContext *ctx);
 int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx);
 int ff_envideo_decode_uninit(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx);
-int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeContext *ctx);
-int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
+int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, bool second_field,
+                           FFEnvideoDecodeContext *ctx);
+int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame, bool second_field,
                             const uint8_t *buf, uint32_t buf_size, bool add_startcode);
-int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeContext *ctx,
-                         const uint8_t *end_sequence, int end_sequence_size);
+int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, bool second_field,
+                         FFEnvideoDecodeContext *ctx, const uint8_t *end_sequence, int end_sequence_size);
 int ff_envideo_update_thread_context(FFEnvideoDecodeContext *dst, const FFEnvideoDecodeContext *src);
 
 int ff_envideo_wait_decode(void *logctx, AVFrame *frame);

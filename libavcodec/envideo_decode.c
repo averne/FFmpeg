@@ -144,7 +144,8 @@ static void envideo_fdd_priv_free(void *priv) {
     if (!tf)
         return;
 
-    av_buffer_unref(&tf->operation.job_ref);
+    av_buffer_unref(&tf->fields[0].operation.job_ref);
+    av_buffer_unref(&tf->fields[1].operation.job_ref);
     av_freep(&tf);
 }
 
@@ -155,29 +156,37 @@ int ff_envideo_wait_decode(void *logctx, AVFrame *frame) {
     AVHWDeviceContext   *hw_device_ctx = (AVHWDeviceContext *)ctx->shared->hw_device_ref->data;
     AVEnvideoDeviceContext *device_ctx = hw_device_ctx->hwctx;
 
-    int err;
+    FFEnvideoDecodeField *field;
+    int i, err;
 
-    if (!tf->in_flight)
-        return 0;
+    for (i = 0; i < FF_ARRAY_ELEMS(tf->fields); ++i) {
+        field = &tf->fields[i];
 
-    err = envideo_fence_wait(device_ctx->device, tf->operation.fence, UINT64_MAX);
-    if (err < 0)
-        return err;
+        if (!field->in_flight)
+            continue;
 
-    tf->in_flight = false;
+        err = envideo_fence_wait(device_ctx->device, field->operation.fence, UINT64_MAX);
+        if (err < 0)
+            return err;
+
+        field->in_flight = false;
+    }
 
     return 0;
 }
 
-int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeContext *ctx) {
+int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, bool second_field,
+                           FFEnvideoDecodeContext *ctx)
+{
     AVHWFramesContext      *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     FrameDecodeData               *fdd = (FrameDecodeData *)frame->private_ref->data;
     AVHWDeviceContext   *hw_device_ctx = (AVHWDeviceContext *)ctx->shared->hw_device_ref->data;
     AVEnvideoDeviceContext *device_ctx = hw_device_ctx->hwctx;
     FFEnvideoDecodeContextShared   *sc = ctx->shared;
+    FFEnvideoDecodeFrame           *tf = fdd->hwaccel_priv;
 
-    FFEnvideoOperation   *op = NULL;
-    FFEnvideoDecodeFrame *tf = NULL;
+    FFEnvideoOperation   *op    = NULL;
+    FFEnvideoDecodeField *field = NULL;
     AVEnvideoJob *job;
     nvdec_status_s   *nvdec_status;
     nvjpg_dec_status *nvjpg_status;
@@ -201,38 +210,26 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecod
      * Contention should never happen for progressive content.
      */
 
-    if (fdd->hwaccel_priv) {
-wait_interlaced:
-        tf = fdd->hwaccel_priv;
-        ff_mutex_lock(&tf->mtx);
-
-        err = ff_envideo_wait_decode(avctx, frame);
-        if (err < 0)
-            return err;
-    } else {
+    if (!tf) {
         tf = av_mallocz(sizeof(*tf));
         if (!tf)
             return AVERROR(ENOMEM);
 
-        ff_mutex_lock(&tf->mtx);
-
-        /* We lost the race, free the fdd and wait for the former field to complete */
+        /* We lost the race, free the fdd and proceed */
         if (fdd->hwaccel_priv) {
             av_freep(&tf);
-            goto wait_interlaced;
-        }
+        } else {
+            fdd->hwaccel_priv      = tf;
+            fdd->hwaccel_priv_free = envideo_fdd_priv_free;
 
-        fdd->hwaccel_priv      = tf;
-        fdd->hwaccel_priv_free = envideo_fdd_priv_free;
-
-        tf->ctx = ctx;
-
-        tf->operation.job_ref = av_envideo_job_pool_get(&sc->pool, &new_buffer);
-        if (!tf->operation.job_ref) {
-            err = AVERROR(ENOMEM);
-            goto fail;
+            tf->ctx = ctx;
         }
     }
+
+    field = &tf->fields[second_field];
+    field->operation.job_ref = av_envideo_job_pool_get(&sc->pool, &new_buffer);
+    if (!field->operation.job_ref)
+        return AVERROR(ENOMEM);
 
     /**
      * Free up input buffers from the pool if the associated job is completed.
@@ -283,11 +280,10 @@ wait_interlaced:
     if (err < 0)
         return err;
 
-    tf = fdd->hwaccel_priv;
-    tf->in_flight        = false;
-    tf->new_input_buffer = new_buffer;
+    field->in_flight        = false;
+    field->new_input_buffer = new_buffer;
 
-    op  = &tf->operation;
+    op  = &field->operation;
     job = (AVEnvideoJob *)op->job_ref->data;
     op->bitstream_len = op->num_slices = 0;
 
@@ -300,20 +296,15 @@ wait_interlaced:
         return err;
 
     return 0;
-
-fail:
-    envideo_fdd_priv_free(tf);
-    return err;
 }
 
-int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
+int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame, bool second_field,
                             const uint8_t *buf, uint32_t buf_size, bool add_startcode)
 {
     FFEnvideoDecodeContext      *ctx = avctx->internal->hwaccel_priv_data;
     FFEnvideoDecodeContextShared *sc = ctx->shared;
-    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
-    FFEnvideoOperation           *op = &tf->operation;
+    FFEnvideoDecodeField      *field = ff_envideo_get_priv(frame, second_field);
+    FFEnvideoOperation           *op = &field->operation;
     AVEnvideoJob                *job = (AVEnvideoJob *)op->job_ref->data;
     EnvideoMap            *input_map = job->input_map;
 
@@ -359,13 +350,12 @@ int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame,
     return 0;
 }
 
-int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeContext *ctx,
-                         const uint8_t *end_sequence, int end_sequence_size)
+int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, bool second_field,
+                         FFEnvideoDecodeContext *ctx, const uint8_t *end_sequence, int end_sequence_size)
 {
     FFEnvideoDecodeContextShared *sc = ctx->shared;
-    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame         *tf = fdd->hwaccel_priv;
-    FFEnvideoOperation           *op = &tf->operation;
+    FFEnvideoDecodeField      *field = ff_envideo_get_priv(frame, second_field);
+    FFEnvideoOperation           *op = &field->operation;
     AVEnvideoJob                *job = (AVEnvideoJob *)op->job_ref->data;
     EnvideoMap            *input_map = job->input_map;
     AVEnvideoFrame          *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
@@ -390,37 +380,31 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, FFEnvideoDecodeC
 
     if (i == ctx->num_operations) {
         ctx->operations = av_realloc_array(ctx->operations, ctx->num_operations + 1, sizeof(FFEnvideoOperation));
-        if (!ctx->operations) {
-            err = AVERROR(ENOMEM);
-            goto fail;
-        }
+        if (!ctx->operations)
+            return AVERROR(ENOMEM);
 
         ctx->operations[ctx->num_operations++] = (FFEnvideoOperation){0};
     }
 
     op = &ctx->operations[i];
 
-    err = envideo_channel_submit(sc->channel, job->cmdbuf, &tf->operation.fence);
+    err = envideo_channel_submit(sc->channel, job->cmdbuf, &op->fence);
     if (err < 0)
-        goto fail;
+        return err;
 
-    tf->in_flight = true;
+    field->in_flight = true;
 
-    err = av_buffer_replace(&op->job_ref, tf->operation.job_ref);
+    err = av_buffer_replace(&op->job_ref, op->job_ref);
     if (err < 0)
-        goto fail;
+        return err;
 
-    op->fence         = tf->operation.fence;
-    op->bitstream_len = tf->operation.bitstream_len;
+    op->fence         = op->fence;
+    op->bitstream_len = op->bitstream_len;
     evframe->fence    = op->fence;
 
     ctx->frame_idx++;
 
-    err = 0;
-
-fail:
-    ff_mutex_unlock(&tf->mtx);
-    return err;
+    return 0;
 }
 
 int ff_envideo_update_thread_context(FFEnvideoDecodeContext *dst, const FFEnvideoDecodeContext *src) {

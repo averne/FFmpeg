@@ -57,6 +57,8 @@ typedef struct EnvideoH264DecodeContext {
 /* Size (width, height) of a macroblock */
 #define MB_SIZE 16
 
+#define SECOND_FIELD(h) (FIELD_PICTURE(h) && !(h)->first_field)
+
 static const uint8_t bitstream_end_sequence[16] = {
     0x00, 0x00, 0x01, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x0b, 0x00, 0x00, 0x00, 0x00,
 };
@@ -265,7 +267,7 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         .ref_pic_flag                           = h->nal_ref_idc != 0,
         .field_pic_flag                         = FIELD_PICTURE(h),
         .bottom_field_flag                      = h->picture_structure == PICT_BOTTOM_FIELD,
-        .second_field                           = FIELD_PICTURE(h) && !h->first_field,
+        .second_field                           = SECOND_FIELD(h),
         .log2_max_frame_num_minus4              = sps->log2_max_frame_num - 4,
         .chroma_format_idc                      = sps->chroma_format_idc,
         .pic_order_cnt_type                     = sps->poc_type,
@@ -368,9 +370,8 @@ static int envideo_h264_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, H264Context *h,
 {
     EnvideoH264DecodeContextShared *ss = ctx->shared;
     FFEnvideoDecodeContextShared   *sc = ctx->core.shared;
-    FrameDecodeData               *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame           *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                  *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField        *field = ff_envideo_get_priv(cur_frame, SECOND_FIELD(h));
+    AVEnvideoJob                  *job = (AVEnvideoJob *)field->operation.job_ref->data;
     EnvideoMap              *input_map = job->input_map;
 
     H264Picture *refs[16+1];
@@ -436,10 +437,9 @@ static int envideo_h264_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, H264Context *h,
 static int envideo_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     H264Context                *h = avctx->priv_data;
     AVFrame                *frame = h->cur_pic_ptr->f;
-    FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
     EnvideoH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    FFEnvideoDecodeFrame *tf;
+    FFEnvideoDecodeField *field;
     AVEnvideoJob *job;
     uint8_t *mem;
     int err;
@@ -447,13 +447,13 @@ static int envideo_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     av_log(avctx, AV_LOG_DEBUG, "Starting h264-envideo frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
 
-    err = ff_envideo_start_frame(avctx, frame, &ctx->core);
+    err = ff_envideo_start_frame(avctx, frame, SECOND_FIELD(h), &ctx->core);
     if (err < 0)
         return err;
 
-    tf  = fdd->hwaccel_priv;
-    job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    mem = envideo_map_get_cpu_addr(job->input_map);
+    field = ff_envideo_get_priv(frame, SECOND_FIELD(h));
+    job   = (AVEnvideoJob *)field->operation.job_ref->data;
+    mem   = envideo_map_get_cpu_addr(job->input_map);
 
     memset(ctx->dpb, 0, sizeof(ctx->dpb));
     ctx->dpb_mask = ctx->pic_idx_mask = 0;
@@ -468,38 +468,43 @@ static int envideo_h264_end_frame(AVCodecContext *avctx) {
     EnvideoH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                *frame = h->cur_pic_ptr->f;
     FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame      *tf = fdd->hwaccel_priv;
-    AVEnvideoJob             *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField   *field = ff_envideo_get_priv(frame, SECOND_FIELD(h));
 
+    AVEnvideoJob *job;
+    FFEnvideoOperation *op;
     nvdec_h264_pic_s *setup;
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending h264-envideo frame with %u slices -> %u bytes\n",
-           tf->operation.num_slices, tf->operation.bitstream_len);
-
-    if (!tf || !tf->operation.num_slices)
+    if (!fdd || !field)
         return 0;
+
+    job = (AVEnvideoJob *)field->operation.job_ref->data;
+    op  = &field->operation;
+
+    av_log(avctx, AV_LOG_DEBUG, "Ending h264-envideo frame with %u slices -> %u bytes\n",
+           op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvdec_h264_pic_s *)(mem + ctx->core.shared->pic_setup_off);
-    setup->stream_len  = tf->operation.bitstream_len + sizeof(bitstream_end_sequence);
-    setup->slice_count = tf->operation.num_slices;
+    setup->stream_len  = op->bitstream_len + sizeof(bitstream_end_sequence);
+    setup->slice_count = op->num_slices;
 
     err = envideo_h264_prepare_cmdbuf(job->cmdbuf, h, frame, ctx);
     if (err < 0)
         return err;
 
-    return ff_envideo_end_frame(avctx, frame, &ctx->core, bitstream_end_sequence,
-                                sizeof(bitstream_end_sequence));
+    return ff_envideo_end_frame(avctx, frame, FIELD_PICTURE(h) && !h->first_field,
+                                &ctx->core, bitstream_end_sequence, sizeof(bitstream_end_sequence));
 }
 
 static int envideo_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     H264Context *h = avctx->priv_data;
     AVFrame *frame = h->cur_pic_ptr->f;
 
-    return ff_envideo_decode_slice(avctx, frame, buf, buf_size, true);
+    return ff_envideo_decode_slice(avctx, frame, FIELD_PICTURE(h) && !h->first_field,
+                                   buf, buf_size, true);
 }
 
 static int envideo_h264_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {

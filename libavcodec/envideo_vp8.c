@@ -220,9 +220,8 @@ static int envideo_vp8_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP8Context *h,
 {
     EnvideoVP8DecodeContextShared *ss = ctx->shared;
     FFEnvideoDecodeContextShared  *sc = ctx->core.shared;
-    FrameDecodeData              *fdd = (FrameDecodeData *)cur_frame->private_ref->data;
-    FFEnvideoDecodeFrame          *tf = fdd->hwaccel_priv;
-    AVEnvideoJob                 *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField       *field = ff_envideo_get_priv(cur_frame, false);
+    AVEnvideoJob                 *job = (AVEnvideoJob *)field->operation.job_ref->data;
     EnvideoMap             *input_map = job->input_map;
 
     int err;
@@ -272,10 +271,9 @@ static int envideo_vp8_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP8Context *h,
 static int envideo_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     VP8Context                *h = avctx->priv_data;
     AVFrame               *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
-    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
     EnvideoVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
-    FFEnvideoDecodeFrame *tf;
+    FFEnvideoDecodeField *field;
     AVEnvideoJob *job;
     uint8_t *mem;
     int err;
@@ -283,13 +281,13 @@ static int envideo_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, ui
     av_log(avctx, AV_LOG_DEBUG, "Starting vp8-envideo frame with pixel format %s\n",
            av_get_pix_fmt_name(avctx->sw_pix_fmt));
 
-    err = ff_envideo_start_frame(avctx, frame, &ctx->core);
+    err = ff_envideo_start_frame(avctx, frame, false, &ctx->core);
     if (err < 0)
         return err;
 
-    tf  = fdd->hwaccel_priv;
-    job = (AVEnvideoJob *)tf->operation.job_ref->data;
-    mem = envideo_map_get_cpu_addr(job->input_map);
+    field = ff_envideo_get_priv(frame, false);
+    job   = (AVEnvideoJob *)field->operation.job_ref->data;
+    mem   = envideo_map_get_cpu_addr(job->input_map);
 
     envideo_vp8_prepare_frame_setup((nvdec_vp8_pic_s *)(mem + ctx->core.shared->pic_setup_off), h, ctx);
 
@@ -306,29 +304,33 @@ static int envideo_vp8_end_frame(AVCodecContext *avctx) {
     EnvideoVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
     FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
-    FFEnvideoDecodeFrame     *tf = fdd->hwaccel_priv;
-    AVEnvideoJob            *job = (AVEnvideoJob *)tf->operation.job_ref->data;
+    FFEnvideoDecodeField  *field = ff_envideo_get_priv(frame, false);
 
+    AVEnvideoJob *job;
+    FFEnvideoOperation *op;
     nvdec_vp8_pic_s *setup;
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending vp8-envideo frame with %u slices -> %u bytes\n",
-           tf->operation.num_slices, tf->operation.bitstream_len);
-
-    if (!tf || !tf->operation.num_slices)
+    if (!fdd || !field)
         return 0;
+
+    job = (AVEnvideoJob *)field->operation.job_ref->data;
+    op  = &field->operation;
+
+    av_log(avctx, AV_LOG_DEBUG, "Ending vp8-envideo frame with %u slices -> %u bytes\n",
+        op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
     setup = (nvdec_vp8_pic_s *)(mem + ctx->core.shared->pic_setup_off);
-    setup->VLDBufferSize = tf->operation.bitstream_len;
+    setup->VLDBufferSize = op->bitstream_len;
 
     err = envideo_vp8_prepare_cmdbuf(job->cmdbuf, h, ctx, frame);
     if (err < 0)
         return err;
 
-    return ff_envideo_end_frame(avctx, frame, &ctx->core, NULL, 0);
+    return ff_envideo_end_frame(avctx, frame, false, &ctx->core, NULL, 0);
 }
 
 static int envideo_vp8_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
@@ -337,7 +339,7 @@ static int envideo_vp8_decode_slice(AVCodecContext *avctx, const uint8_t *buf, u
 
     int offset = h->keyframe ? 10 : 3;
 
-    return ff_envideo_decode_slice(avctx, frame, buf + offset, buf_size - offset, false);
+    return ff_envideo_decode_slice(avctx, frame, false, buf + offset, buf_size - offset, false);
 }
 
 static int envideo_vp8_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
