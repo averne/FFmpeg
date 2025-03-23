@@ -194,8 +194,8 @@ static void dpb_add(H264Context *h, nvdec_dpb_entry_s *dst, H264Picture *src) {
         .bottom_field_marking = (src->reference & PICT_BOTTOM_FIELD) ? marking : 0,
         .output_memory_layout = 0, /* NV12 */
         .FieldOrderCnt        = {
-            field_poc(src->field_poc, true),
-            field_poc(src->field_poc, false),
+            field_poc(src->field_poc, src->reference != PICT_BOTTOM_FIELD),
+            field_poc(src->field_poc, src->reference == PICT_TOP_FIELD),
         },
         .FrameIdx             = src->long_ref ? src->pic_id : src->frame_num,
     };
@@ -280,8 +280,8 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         .output_memory_layout                   = 0, /* NV12 */
 
         .CurrFieldOrderCnt                      = {
-            field_poc(h->cur_pic_ptr->field_poc, true),
-            field_poc(h->cur_pic_ptr->field_poc, false),
+            field_poc(h->cur_pic_ptr->field_poc, FIELD_PICTURE(h) ? h->picture_structure == PICT_TOP_FIELD : true ),
+            field_poc(h->cur_pic_ptr->field_poc, FIELD_PICTURE(h) ? h->picture_structure == PICT_TOP_FIELD : false),
         },
 
         .lossless_ipred8x8_filter_enable        = true,
@@ -309,7 +309,7 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
     max = FFMIN(16, FF_ARRAY_ELEMS(refs) - num_refs);
     for (i = 0; i < max; ++i)
         if (h->long_ref[i])
-            refs[num_refs++] = h->short_ref[i];
+            refs[num_refs++] = h->long_ref[i];
 
     /* Add all frames with an already allocated DPB index to our ref list */
     for (i = 0; i < num_refs; ++i) {
