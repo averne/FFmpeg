@@ -48,6 +48,18 @@ typedef struct AVEnvideoFrame {
      * or tiled (hardware-specific)
      */
     bool is_pitch;
+
+    /**
+     * The number of GOB (group of bytes) atoms in a block
+     * GPU framebuffers are commonly tiled (sometimes referred to as swizzled) to improve
+     * spatial locality and cache access patterns. On Nvidia hardware, surfaces are
+     * vertically sliced into a number of blocks, themselves made up of an integer amount of GOBs.
+     * This value is a power of 2 between 1 and 32.
+     * Note that GOBs are always 64x8 bytes, regardless of the texture format or block size. The
+     * internal layout of a GOB is irrelevant and can change between hardware generations.
+     * For instance, a surface with gob_height = 2 is tiled into 64x16 blocks.
+     */
+    uint8_t gob_height;
 } AVEnvideoFrame;
 
 /**

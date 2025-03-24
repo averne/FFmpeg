@@ -32,6 +32,7 @@
 #include "decode.h"
 #include "envideo_decode.h"
 
+#include "libavutil/intmath.h"
 #include "libavutil/pixdesc.h"
 
 typedef struct EnvideoVP94DecodeContextShared {
@@ -385,8 +386,10 @@ static void envideo_vp9_update_counts(nvdec_vp9EntropyCounts_t *cts,
 static void envideo_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecContext *avctx,
                                             EnvideoVP9DecodeContext *ctx)
 {
-    VP9Context       *s = avctx->priv_data;
-    VP9SharedContext *h = &s->s;
+    VP9Context           *s = avctx->priv_data;
+    VP9SharedContext     *h = &s->s;
+    AVFrame          *frame = h->frames[CUR_FRAME].tf.f;
+    AVEnvideoFrame *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
 
     int i;
 
@@ -398,7 +401,7 @@ static void envideo_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecConte
         .gptimer_timeout_value    = 0, /* Default value */
 
         .tileformat               = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
-        .gob_height               = 0,                           /* GOB_2 */
+        .gob_height               = ff_ctz(evframe->gob_height) - 1,
 
         .Vp9BsdCtrlOffset         = ctx->shared->bsd_ctrl_off,
 
@@ -423,11 +426,11 @@ static void envideo_vp9_prepare_frame_setup(nvdec_vp9_pic_s *setup, AVCodecConte
             FSTRIDE(h->refs[h->h.refidx[2]].f, 1),
         },
 
-        .width                    = FWIDTH (h->frames[CUR_FRAME].tf.f),
-        .height                   = FHEIGHT(h->frames[CUR_FRAME].tf.f),
+        .width                    = FWIDTH (frame),
+        .height                   = FHEIGHT(frame),
         .framestride              = {
-            FSTRIDE(h->frames[CUR_FRAME].tf.f, 0),
-            FSTRIDE(h->frames[CUR_FRAME].tf.f, 1),
+            FSTRIDE(frame, 0),
+            FSTRIDE(frame, 1),
         },
 
         .keyFrame                 = h->h.keyframe,

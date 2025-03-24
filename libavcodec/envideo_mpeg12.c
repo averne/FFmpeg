@@ -32,6 +32,7 @@
 #include "decode.h"
 #include "envideo_decode.h"
 
+#include "libavutil/intmath.h"
 #include "libavutil/pixdesc.h"
 
 typedef struct EnvideoMPEG12DecodeContext {
@@ -113,6 +114,9 @@ fail:
 static void envideo_mpeg12_prepare_frame_setup(nvdec_mpeg2_pic_s *setup, MpegEncContext *s,
                                                EnvideoMPEG12DecodeContext *ctx)
 {
+    AVFrame          *frame = s->cur_pic.ptr->f;
+    AVEnvideoFrame *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
+
     *setup = (nvdec_mpeg2_pic_s){
         .gptimer_timeout_value      = 0, /* Default value */
 
@@ -127,7 +131,7 @@ static void envideo_mpeg12_prepare_frame_setup(nvdec_mpeg2_pic_s *setup, MpegEnc
         .intra_vlc_format           = s->intra_vlc_format,
 
         .tileFormat                 = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
-        .gob_height                 = 0,                           /* GOB_2 */
+        .gob_height                 = ff_ctz(evframe->gob_height) - 1,
 
         .f_code                     = {
             s->mpeg_f_code[0][0], s->mpeg_f_code[0][1],
@@ -136,8 +140,8 @@ static void envideo_mpeg12_prepare_frame_setup(nvdec_mpeg2_pic_s *setup, MpegEnc
 
         .PicWidthInMbs              = FFALIGN(s->width,  MB_SIZE) / MB_SIZE,
         .FrameHeightInMbs           = FFALIGN(s->height, MB_SIZE) / MB_SIZE,
-        .pitch_luma                 = s->cur_pic.ptr->f->linesize[0],
-        .pitch_chroma               = s->cur_pic.ptr->f->linesize[1],
+        .pitch_luma                 = frame->linesize[0],
+        .pitch_chroma               = frame->linesize[1],
         .luma_top_offset            = 0,
         .luma_bot_offset            = 0,
         .luma_frame_offset          = 0,

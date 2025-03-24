@@ -34,6 +34,7 @@
 #define DQPROFILE_SINGLE_EDGE DQPROFILE_SINGLE_EDGE_
 #include "envideo_decode.h"
 
+#include "libavutil/intmath.h"
 #include "libavutil/pixdesc.h"
 
 typedef struct EnvideoVC1DecodeContextShared {
@@ -175,9 +176,10 @@ fail:
 static void envideo_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecContext *avctx,
                                             EnvideoVC1DecodeContext *ctx)
 {
-    VC1Context     *v = avctx->priv_data;
-    MpegEncContext *s = &v->s;
-    AVFrame    *frame = s->cur_pic.ptr->f;
+    VC1Context           *v = avctx->priv_data;
+    MpegEncContext       *s = &v->s;
+    AVFrame          *frame = s->cur_pic.ptr->f;
+    AVEnvideoFrame *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
 
     /**
      * Notes:
@@ -236,7 +238,7 @@ static void envideo_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
         .finterpflag             = v->finterpflag,
 
         .tileFormat              = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
-        .gob_height              = 0,                           /* GOB_2 */
+        .gob_height              = ff_ctz(evframe->gob_height) - 1,
 
         .psf                     = v->psf,
 

@@ -32,6 +32,7 @@
 #include "decode.h"
 #include "envideo_decode.h"
 
+#include "libavutil/intmath.h"
 #include "libavutil/pixdesc.h"
 
 typedef struct EnvideoHEVCFrameData {
@@ -306,15 +307,16 @@ static inline int find_slot(uint32_t *mask) {
 static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecContext *avctx,
                                              AVFrame *frame, EnvideoHEVCDecodeContext *ctx)
 {
-    FFEnvideoDecodeField   *field = ff_envideo_get_priv(frame, false);
-    AVEnvideoJob             *job = (AVEnvideoJob *)field->operation.job_ref->data;
-    EnvideoMap         *input_map = job->input_map;
-    AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     HEVCContext                *s = avctx->priv_data;
     HEVCLayerContext           *l = &s->layers[s->cur_layer];
     SliceHeader               *sh = &s->sh;
     const HEVCPPS            *pps = s->pps;
     const HEVCSPS            *sps = pps->sps;
+    AVEnvideoFrame       *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
+    FFEnvideoDecodeField   *field = ff_envideo_get_priv(frame, false);
+    AVEnvideoJob             *job = (AVEnvideoJob *)field->operation.job_ref->data;
+    EnvideoMap         *input_map = job->input_map;
+    AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
 
     HEVCFrame *fr;
     EnvideoHEVCFrameData *fr_priv;
@@ -352,15 +354,15 @@ static void envideo_hevc_prepare_frame_setup(nvdec_hevc_pic_s *setup, AVCodecCon
         .gptimer_timeout_value                       = 0, /* Default value */
 
         .tileformat                                  = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
-        .gob_height                                  = 0,                           /* GOB_2 */
+        .gob_height                                  = ff_ctz(evframe->gob_height) - 1,
 
         .sw_start_code_e                             = 1,
         .disp_output_mode                            = output_mode,
 
         /* Divide by two if we are decoding to a 2bpp surface */
         .framestride                                 = {
-            s->cur_frame->f->linesize[0] / ((output_mode == 1) ? 2 : 1),
-            s->cur_frame->f->linesize[1] / ((output_mode == 1) ? 2 : 1),
+            frame->linesize[0] / ((output_mode == 1) ? 2 : 1),
+            frame->linesize[1] / ((output_mode == 1) ? 2 : 1),
         },
 
         .colMvBuffersize                             = ctx->shared->col_mv_size,

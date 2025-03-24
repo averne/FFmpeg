@@ -163,6 +163,9 @@ static AVBufferRef *envideo_pool_alloc(void *opaque, size_t size) {
     if (err < 0)
         goto fail;
 
+    /* We always use a gob height of 2, meaning the block height is 16 bytes (the height of a macroblock) */
+    frame->gob_height = 2;
+
     buffer = av_buffer_create((uint8_t *)frame, sizeof(*frame), envideo_frame_free, ctx, 0);
     if (!buffer)
         goto fail;
@@ -357,7 +360,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
             .height     = AV_CEIL_RSHIFT(src->height, i ? desc->log2_chroma_h : 0),
             .stride     = src->linesize[i],
             .tiled      = from && !evframe->is_pitch,
-            .gob_height = from ? 2 : 0, /* Engine code assumes GOB_HEIGHT = 2 */
+            .gob_height = from ? evframe->gob_height : 0,
         };
 
         EnvideoSurfaceInfo dst_info = {
@@ -367,7 +370,7 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
             .height     = AV_CEIL_RSHIFT(dst->height, i ? desc->log2_chroma_h : 0),
             .stride     = dst->linesize[i],
             .tiled      = !from && !evframe->is_pitch,
-            .gob_height = !from ? 2 : 0, /* Engine code assumes GOB_HEIGHT = 2 */
+            .gob_height = !from ? evframe->gob_height : 0,
         };
 
         err = envideo_surface_transfer(job->cmdbuf, &src_info, &dst_info);

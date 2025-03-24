@@ -34,6 +34,7 @@
 #include "decode.h"
 #include "envideo_decode.h"
 
+#include "libavutil/intmath.h"
 #include "libavutil/pixdesc.h"
 
 typedef struct EnvideoMPEG4DecodeContextShared {
@@ -160,8 +161,10 @@ fail:
 static void envideo_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecContext *avctx,
                                               EnvideoMPEG4DecodeContext *ctx)
 {
-    Mpeg4DecContext *m = avctx->priv_data;
-    MpegEncContext  *s = &m->m;
+    Mpeg4DecContext      *m = avctx->priv_data;
+    MpegEncContext       *s = &m->m;
+    AVFrame          *frame = s->cur_pic.ptr->f;
+    AVEnvideoFrame *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
 
     int i;
 
@@ -177,14 +180,14 @@ static void envideo_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecC
         .resync_marker_disable        = !m->resync_marker,
 
         .tileFormat                   = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
-        .gob_height                   = 0,                           /* GOB_2 */
+        .gob_height                   = ff_ctz(evframe->gob_height) - 1,
 
         .width                        = FFALIGN(s->width,  MB_SIZE),
         .height                       = FFALIGN(s->height, MB_SIZE),
 
         .FrameStride                  = {
-            s->cur_pic.ptr->f->linesize[0],
-            s->cur_pic.ptr->f->linesize[1],
+            frame->linesize[0],
+            frame->linesize[1],
         },
 
         .luma_top_offset              = 0,

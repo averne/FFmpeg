@@ -174,17 +174,20 @@ fail:
 static void envideo_vp8_prepare_frame_setup(nvdec_vp8_pic_s *setup, VP8Context *h,
                                             EnvideoVP8DecodeContext *ctx)
 {
+    AVFrame          *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
+    AVEnvideoFrame *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
+
     *setup = (nvdec_vp8_pic_s){
         .gptimer_timeout_value            = 0, /* Default value */
 
-        .FrameWidth                       = FFALIGN(h->framep[VP8_FRAME_CURRENT]->tf.f->width,  MB_SIZE),
-        .FrameHeight                      = FFALIGN(h->framep[VP8_FRAME_CURRENT]->tf.f->height, MB_SIZE),
+        .FrameWidth                       = FFALIGN(frame->width,  MB_SIZE),
+        .FrameHeight                      = FFALIGN(frame->height, MB_SIZE),
 
         .keyFrame                         = h->keyframe,
         .version                          = h->profile,
 
         .tileFormat                       = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
-        .gob_height                       = 0,                           /* GOB_2 */
+        .gob_height                       = ff_ctz(evframe->gob_height) - 1,
 
         .errorConcealOn                   = 1,
 
@@ -193,8 +196,8 @@ static void envideo_vp8_prepare_frame_setup(nvdec_vp8_pic_s *setup, VP8Context *
         .HistBufferSize                   = ctx->shared->history_size / 256,
 
         .FrameStride                      = {
-            h->framep[VP8_FRAME_CURRENT]->tf.f->linesize[0] / MB_SIZE,
-            h->framep[VP8_FRAME_CURRENT]->tf.f->linesize[1] / MB_SIZE,
+            frame->linesize[0] / MB_SIZE,
+            frame->linesize[1] / MB_SIZE,
         },
 
         .luma_top_offset                  = 0,

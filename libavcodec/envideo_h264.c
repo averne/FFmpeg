@@ -31,8 +31,8 @@
 #include "decode.h"
 #include "envideo_decode.h"
 
+#include "libavutil/intmath.h"
 #include "libavutil/pixdesc.h"
-#include "libavutil/refstruct.h"
 
 typedef struct EnvideoH264FrameData {
     uint8_t pic_idx;
@@ -218,8 +218,10 @@ static inline int find_slot(uint32_t *mask) {
 static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Context *h,
                                              EnvideoH264DecodeContext *ctx)
 {
-    const PPS *pps = h->ps.pps;
-    const SPS *sps = h->ps.sps;
+    const PPS          *pps = h->ps.pps;
+    const SPS          *sps = h->ps.sps;
+    AVFrame          *frame = h->cur_pic_ptr->f;
+    AVEnvideoFrame *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
 
     H264Picture *refs[16+1] = {0};
     EnvideoH264FrameData *fr_priv;
@@ -238,7 +240,7 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         .FrameHeightInMbs                       = h->mb_height,
 
         .tileFormat                             = !ctx->core.shared->is_tegra, /* Tegra/GPU block linear */
-        .gob_height                             = 0,                           /* GOB_2 */
+        .gob_height                             = ff_ctz(evframe->gob_height) - 1,
 
         .entropy_coding_mode_flag               = pps->cabac,
         .pic_order_present_flag                 = pps->pic_order_present,
@@ -248,8 +250,8 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         .redundant_pic_cnt_present_flag         = pps->redundant_pic_cnt_present,
         .transform_8x8_mode_flag                = pps->transform_8x8_mode,
 
-        .pitch_luma                             = h->cur_pic_ptr->f->linesize[0],
-        .pitch_chroma                           = h->cur_pic_ptr->f->linesize[1],
+        .pitch_luma                             = frame->linesize[0],
+        .pitch_chroma                           = frame->linesize[1],
 
         .luma_top_offset                        = 0,
         .luma_bot_offset                        = 0,
