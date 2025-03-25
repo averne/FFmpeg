@@ -102,7 +102,8 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
 
     err = av_envideo_job_pool_init(&s->pool, device_ctx->device, s->channel,
                                    ctx->input_map_size, ENVIDEO_MAP_ALIGN,
-                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable | EnvideoMap_UsageCmdbuf,
+                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable |
+                                   EnvideoMap_LocationDevice  | EnvideoMap_UsageCmdbuf,
                                    s->cmdbuf_off, s->max_cmdbuf_size);
     if (err < 0)
         goto fail;

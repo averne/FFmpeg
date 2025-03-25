@@ -166,7 +166,8 @@ static int envideo_vp9_decode_init(AVCodecContext *avctx) {
     common_map_size     = FFALIGN(ss->intra_top_off   + 0x10000,          0x1000);
 
     err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
+                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable |
+                             EnvideoMap_LocationDevice  | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 

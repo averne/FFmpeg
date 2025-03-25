@@ -168,7 +168,8 @@ static int envideo_hevc_decode_init(AVCodecContext *avctx) {
     common_map_size   = FFALIGN(ss->intra_top_off + 0x10000,     0x1000);
 
     err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
+                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable |
+                             EnvideoMap_LocationDevice  | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 
@@ -661,8 +662,8 @@ static int envideo_hevc_start_frame(AVCodecContext *avctx, const uint8_t *buf, u
     uint8_t *mem;
     int err;
 
-    av_log(avctx, AV_LOG_DEBUG, "Starting hevc-envideo frame with pixel format %s\n",
-           av_get_pix_fmt_name(avctx->sw_pix_fmt));
+    av_log(avctx, AV_LOG_DEBUG, "Starting hevc-envideo frame with pixel format %s, poc %d, ptr %p\n",
+           av_get_pix_fmt_name(avctx->sw_pix_fmt), s->cur_frame->poc, frame->data[0]);
 
     err = ff_envideo_start_frame(avctx, frame, false, &ctx->core);
     if (err < 0)
@@ -700,8 +701,6 @@ static int envideo_hevc_end_frame(AVCodecContext *avctx) {
     job = (AVEnvideoJob *)field->operation.job_ref->data;
     op  = &field->operation;
 
-    av_log(avctx, AV_LOG_DEBUG, "Ending hevc-envideo frame with %u slices -> %u bytes\n",
-           op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
@@ -712,7 +711,15 @@ static int envideo_hevc_end_frame(AVCodecContext *avctx) {
     if (err < 0)
         return err;
 
-    return ff_envideo_end_frame(avctx, frame, false, &ctx->core, NULL, 0);
+    err = ff_envideo_end_frame(avctx, frame, false, &ctx->core, NULL, 0);
+    if (err < 0)
+        return err;
+
+    AVEnvideoFrame *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
+    av_log(avctx, AV_LOG_DEBUG, "Ending hevc-envideo frame, poc %d, ptr %p, fence %#lx\n",
+        s->cur_frame->poc, frame->data[0], evframe->fence);
+
+    return 0;
 }
 
 static int envideo_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {

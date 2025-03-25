@@ -150,7 +150,8 @@ int ff_envideo_vpp_config_input(AVFilterLink *inlink) {
 
     err = av_envideo_job_pool_init(&ctx->pool, device_ctx->device, ctx->channel,
                                    ctx->vic_map_size, ENVIDEO_MAP_ALIGN,
-                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable | EnvideoMap_UsageCmdbuf,
+                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable |
+                                   EnvideoMap_LocationDevice  | EnvideoMap_UsageCmdbuf,
                                    ctx->vic_cmdbuf_off, ctx->max_cmdbuf_size);
 
     return 0;

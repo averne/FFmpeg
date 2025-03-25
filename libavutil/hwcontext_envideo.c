@@ -82,7 +82,8 @@ static int envideo_dev_init(AVHWDeviceContext *ctx) {
 #define COPY_CMDBUF_SIZE 0x1000
     err = av_envideo_job_pool_init(&priv->copy_pool, hwctx->device, priv->copy_channel,
                                    COPY_CMDBUF_SIZE, ENVIDEO_MAP_ALIGN,
-                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable | EnvideoMap_UsageCmdbuf,
+                                   EnvideoMap_CpuWriteCombine | EnvideoMap_GpuUncacheable |
+                                   EnvideoMap_LocationHost    | EnvideoMap_UsageCmdbuf,
                                    0, COPY_CMDBUF_SIZE);
 
     return 0;
@@ -159,12 +160,10 @@ static AVBufferRef *envideo_pool_alloc(void *opaque, size_t size) {
         goto fail;
 
     err = envideo_map_create(hwctx->device, &frame->map, size, ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuUnmapped | EnvideoMap_GpuCacheable | EnvideoMap_UsageFramebuffer);
+                             EnvideoMap_CpuUnmapped    | EnvideoMap_GpuCacheable |
+                             EnvideoMap_LocationDevice | EnvideoMap_UsageFramebuffer);
     if (err < 0)
         goto fail;
-
-    /* We always use a gob height of 2, meaning the block height is 16 bytes (the height of a macroblock) */
-    frame->gob_height = 2;
 
     buffer = av_buffer_create((uint8_t *)frame, sizeof(*frame), envideo_frame_free, ctx, 0);
     if (!buffer)
@@ -221,6 +220,9 @@ static int envideo_get_buffer(AVHWFramesContext *ctx, AVFrame *frame) {
         return AVERROR(ENOMEM);
 
     f = (AVEnvideoFrame *)frame->buf[0]->data;
+    f->fence      = 0;
+    f->is_pitch   = false;
+    f->gob_height = 2; /* We always use a gob height of 2, meaning the block height is 16 bytes (the height of a macroblock) */
 
     bpp = desc->comp[0].step;
     width_aligned  = FFALIGN(ctx->width,  ENVIDEO_WIDTH_ALIGN (bpp));
@@ -310,7 +312,8 @@ static int envideo_transfer_data(AVHWFramesContext *ctx, AVFrame *dst, const AVF
         map_bases  [i] = (uint8_t *)((uintptr_t)swframe->buf[i]->data & ~0xfff);
         map_offsets[i] = (uintptr_t)swframe->buf[i]->data & 0xfff;
         err = envideo_map_from_va(hwctx->device, &maps[i], map_bases[i], swframe->buf[i]->size + map_offsets[i], 0x100,
-                                  EnvideoMap_CpuCacheable | EnvideoMap_GpuCacheable | EnvideoMap_UsageFramebuffer);
+                                  EnvideoMap_CpuCacheable | EnvideoMap_GpuUncacheable |
+                                  EnvideoMap_LocationHost | EnvideoMap_UsageFramebuffer);
         if (err < 0)
             goto fail;
 

@@ -253,7 +253,8 @@ static int envideo_spatialfilter_init_filter_map(EnvideoSpatialFilterContext *ct
     int err;
 
     err = envideo_map_create(device_ctx->device, &ctx->filter_map, FFALIGN(sizeof(g_VicFilterData), 0x1000), ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
+                             EnvideoMap_CpuWriteCombine | EnvideoMap_GpuCacheable |
+                             EnvideoMap_LocationDevice  | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 

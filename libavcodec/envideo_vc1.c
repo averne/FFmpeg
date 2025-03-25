@@ -149,7 +149,8 @@ static int envideo_vc1_decode_init(AVCodecContext *avctx) {
     common_map_size = FFALIGN(ss->scratch_off + scratch_size, 0x1000);
 
     err = envideo_map_create(device_hwctx->device, &ss->common_map, common_map_size, ENVIDEO_MAP_ALIGN,
-                             EnvideoMap_CpuUnmapped | EnvideoMap_GpuCacheable | EnvideoMap_UsageEngine);
+                             EnvideoMap_CpuUnmapped    | EnvideoMap_GpuCacheable |
+                             EnvideoMap_LocationDevice | EnvideoMap_UsageEngine);
     if (err < 0)
         goto fail;
 
