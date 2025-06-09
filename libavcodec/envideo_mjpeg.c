@@ -56,21 +56,18 @@ static int envideo_mjpeg_decode_init(AVCodecContext *avctx) {
     EnvideoMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
     FFEnvideoDecodeContextShared *sc;
-    enum AVPixelFormat fmt;
-    int luma, err;
+    int err;
 
     av_log(avctx, AV_LOG_DEBUG, "Initializing mjpeg-envideo decoder\n");
 
     /* Reject encodes with known hardware issues */
     if (avctx->profile != AV_PROFILE_MJPEG_HUFFMAN_BASELINE_DCT) {
-        av_log(avctx, AV_LOG_ERROR, "Non-baseline encoded jpegs are not supported by NVJPG\n");
+        av_log(avctx, AV_LOG_ERROR, "Non-baseline profiles are not supported by NVJPG\n");
         return AVERROR(EINVAL);
     }
 
-    fmt = s->avctx->pix_fmt, luma = s->comp_index[0];
-    if ((fmt == AV_PIX_FMT_YUV444P || fmt == AV_PIX_FMT_YUVJ444P)
-            && (s->h_count[luma] != 1 || s->v_count[luma] != 1)) {
-        av_log(avctx, AV_LOG_ERROR, "Subsampled YUV444 is not supported by NVJPG\n");
+    if (s->h_count[s->comp_index[0]] * s->v_count[s->comp_index[0]] != 1) {
+        av_log(avctx, AV_LOG_ERROR, "Subsampling on all components is not supported by NVJPG\n");
         return AVERROR(EINVAL);
     }
 
@@ -145,7 +142,7 @@ static void envideo_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, 
         default:
         case AV_PIX_FMT_NV12:
             output_chroma_mode = 1; /* YUV420 */
-            memory_mode        = 0; /* Semi-planar NV12 */
+            memory_mode        = 0; /* Semi-planar */
             break;
         case AV_PIX_FMT_YUV422P:
             output_chroma_mode = 2; /* YUV422H */
@@ -196,11 +193,11 @@ static void envideo_mjpeg_prepare_frame_setup(nvjpg_dec_drv_pic_setup_s *setup, 
 
     for (i = 0; i < s->nb_components; ++i) {
         j = s->comp_index[i];
-        setup->blkPar[j].ac     = s->ac_index   [i];
-        setup->blkPar[j].dc     = s->dc_index   [i];
         setup->blkPar[j].hblock = s->h_count    [i];
         setup->blkPar[j].vblock = s->v_count    [i];
         setup->blkPar[j].quant  = s->quant_index[i];
+        setup->blkPar[j].ac     = s->ac_index   [i];
+        setup->blkPar[j].dc     = s->dc_index   [i];
     }
 
     for (i = 0; i < 4; ++i) {
@@ -289,8 +286,11 @@ static int envideo_mjpeg_end_frame(AVCodecContext *avctx) {
     if (!fdd || !field)
         return 0;
 
+    job = (AVEnvideoJob *)field->operation.job_ref->data;
+    op  = &field->operation;
+
     av_log(avctx, AV_LOG_DEBUG, "Ending mjpeg-envideo frame with %u slices -> %u bytes\n",
-        op->num_slices, op->bitstream_len);
+           op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
@@ -334,9 +334,17 @@ static int envideo_mjpeg_frame_params(AVCodecContext *avctx, AVBufferRef *hw_fra
     if (err < 0)
         return err;
 
-    /* NVJPG1.0 cannot output 4:2:2 subsampled data to an interleaved chroma plane */
-    if (frames_ctx->sw_format == AV_PIX_FMT_NV16)
-        frames_ctx->sw_format = AV_PIX_FMT_YUV422P;
+    /* NVJPG1.0 cannot output non-4:2:0 subsampled data to an interleaved chroma plane */
+    switch (frames_ctx->sw_format) {
+        case AV_PIX_FMT_NV16:
+            frames_ctx->sw_format = AV_PIX_FMT_YUV422P;
+            break;
+        case AV_PIX_FMT_NV24:
+            frames_ctx->sw_format = AV_PIX_FMT_YUV444P;
+            break;
+        default:
+            break;
+    }
 
     /**
      * NVJPG1.0 can only output pitch linear data.

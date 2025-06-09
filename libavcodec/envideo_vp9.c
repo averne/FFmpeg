@@ -645,7 +645,7 @@ static int envideo_vp9_end_frame(AVCodecContext *avctx) {
     op  = &field->operation;
 
     av_log(avctx, AV_LOG_DEBUG, "Ending vp9-envideo frame with %u slices -> %u bytes\n",
-        op->num_slices, op->bitstream_len);
+           op->num_slices, op->bitstream_len);
 
     mem = envideo_map_get_cpu_addr(job->input_map);
 
