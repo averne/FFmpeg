@@ -72,6 +72,10 @@
 #define CHECK_CU(x) FF_CUDA_CHECK_DL(cuda_cu, cu, x)
 #endif
 
+#if CONFIG_RENDERDOC
+#include "renderdoc_app.h"
+#endif
+
 typedef struct VulkanDeviceFeatures {
     VkPhysicalDeviceFeatures2 device;
 
@@ -158,6 +162,12 @@ typedef struct VulkanDevicePriv {
 
     /* Maximum queues */
     int limit_queues;
+
+#if CONFIG_RENDERDOC
+    /* RenderDoc */
+    void *renderdoc_lib;
+    RENDERDOC_API_1_6_0 *rdoc_api;
+#endif
 } VulkanDevicePriv;
 
 typedef struct VulkanFramesPriv {
@@ -619,6 +629,56 @@ static int load_libvulkan(AVHWDeviceContext *ctx)
 
     return 0;
 }
+
+#if CONFIG_RENDERDOC
+static int load_librenderdoc(AVHWDeviceContext *ctx)
+{
+    VulkanDevicePriv *p = ctx->hwctx;
+
+    pRENDERDOC_GetAPI rdoc_get_api;
+    void *mod;
+    int major, minor, patch, err;
+
+    static const char *lib_names[] = {
+#if defined(_WIN32)
+        "renderdoc.dll",
+#elif defined(__APPLE__)
+        "librenderdoc.dylib",
+#else
+        "librenderdoc.so",
+#endif
+    };
+
+    for (int i = 0; i < FF_ARRAY_ELEMS(lib_names); i++) {
+        mod = dlopen(lib_names[i], RTLD_NOW | RTLD_LOCAL);
+        if (mod)
+            break;
+    }
+
+    if (!mod) {
+        av_log(ctx, AV_LOG_ERROR, "Unable to open the renderdoc library!\n");
+        err = AVERROR_UNKNOWN;
+        goto fail;
+    }
+
+    rdoc_get_api = (pRENDERDOC_GetAPI)dlsym(mod, "RENDERDOC_GetAPI");
+    err = rdoc_get_api(eRENDERDOC_API_Version_1_6_0, (void **)&p->rdoc_api);
+    if (!err) {
+        av_log(ctx, AV_LOG_ERROR, "Unable to load the renderdoc library!\n");
+        err = AVERROR_UNKNOWN;
+        goto fail;
+    }
+
+    p->rdoc_api->GetAPIVersion(&major, &minor, &patch);
+    av_log(ctx, AV_LOG_VERBOSE, "Loaded RenderDoc, API version: %d.%d.%d\n",
+           major, minor, patch);
+
+fail:
+    dlclose(mod);
+
+    return err;
+}
+#endif
 
 typedef struct VulkanOptExtension {
     const char *name;
@@ -1725,6 +1785,10 @@ static int vulkan_device_create_internal(AVHWDeviceContext *ctx,
     VkDeviceCreateInfo dev_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
     };
+
+#if CONFIG_RENDERDOC
+    load_librenderdoc(ctx);
+#endif
 
     /* Create an instance if not given one */
     if ((err = create_instance(ctx, opts, &debug_mode)))
@@ -4788,3 +4852,51 @@ const HWContextType ff_hwcontext_type_vulkan = {
         AV_PIX_FMT_NONE
     },
 };
+
+int av_vk_start_capture(struct AVHWDeviceContext *ctx) {
+    av_unused VulkanDevicePriv *p = ctx->hwctx;
+
+    int err = AVERROR_INVALIDDATA;
+
+#if CONFIG_RENDERDOC
+    if (!p->rdoc_api || !p->rdoc_api->StartFrameCapture)
+        return AVERROR_INVALIDDATA;
+
+    p->rdoc_api->StartFrameCapture(NULL, NULL);
+
+    err = 0;
+#endif
+
+    return err;
+}
+
+int av_vk_end_capture(struct AVHWDeviceContext *ctx) {
+    av_unused VulkanDevicePriv *p = ctx->hwctx;
+
+    int err = AVERROR_INVALIDDATA;
+
+#if CONFIG_RENDERDOC
+    if (!p->rdoc_api || !p->rdoc_api->EndFrameCapture)
+        return AVERROR_INVALIDDATA;
+
+    err = p->rdoc_api->EndFrameCapture(NULL, NULL) ? 0 : AVERROR_EXTERNAL;
+#endif
+
+    return err;
+}
+
+int av_vk_is_capturing(struct AVHWDeviceContext *ctx) {
+    av_unused VulkanDevicePriv *p = ctx->hwctx;
+
+    int err = AVERROR_INVALIDDATA;
+
+#if CONFIG_RENDERDOC
+    if (!p->rdoc_api || !p->rdoc_api->IsFrameCapturing)
+        return AVERROR_INVALIDDATA;
+
+    err = p->rdoc_api->IsFrameCapturing(NULL, NULL) ?: AVERROR_EXTERNAL;
+#endif
+
+    return err;
+
+}

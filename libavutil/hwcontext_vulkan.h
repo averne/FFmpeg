@@ -374,4 +374,18 @@ AVVkFrame *av_vk_frame_alloc(void);
  */
 const VkFormat *av_vkfmt_from_pixfmt(enum AVPixelFormat p);
 
+/**
+ * Frame capture using RenderDoc.
+ * Returns 0 on success, a negative AVERROR code on failure.
+ * @note Should not be called from multiple threads at the same time, as the frame capture is not thread-safe.
+ */
+int av_vk_start_capture(struct AVHWDeviceContext *ctx);
+int av_vk_end_capture(struct AVHWDeviceContext *ctx);
+
+/*
+ * Returns 1 if the device is capturing frames, 0 if not.
+ * Returns a negative AVERROR code on failure.
+ */
+int av_vk_is_capturing(struct AVHWDeviceContext *ctx);
+
 #endif /* AVUTIL_HWCONTEXT_VULKAN_H */

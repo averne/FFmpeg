@@ -529,6 +529,7 @@ Developer options (useful when working on FFmpeg itself):
   --disable-ptx-compression don't compress CUDA PTX code even when possible
   --disable-resource-compression don't compress resources even when possible
   --disable-version-tracking don't include the git/release version in the build
+  --enable-renderdoc       Enable RenderDoc capture support [no]
 
 NOTE: Object files are built at the place where configure is launched.
 EOF
@@ -2132,6 +2133,7 @@ CONFIG_LIST="
     ossfuzz
     pic
     ptx_compression
+    renderdoc
     resource_compression
     thumb
     valgrind_backtrace
@@ -2872,6 +2874,7 @@ linux_perf_deps="linux_perf_event_h"
 symver_if_any="symver_asm_label symver_gnu_asm"
 valgrind_backtrace_conflict="optimizations"
 valgrind_backtrace_deps="valgrind_valgrind_h"
+renderdoc_deps_any="libdl LoadLibrary"
 
 # threading support
 atomics_win32_if="MemoryBarrier"
@@ -7532,6 +7535,8 @@ elif enabled vulkan; then
     check_pkg_config_header_only vulkan "vulkan >= 1.3.277" "vulkan/vulkan.h" "defined VK_VERSION_1_3" ||
         check_cpp_condition vulkan "vulkan/vulkan.h" "defined(VK_VERSION_1_4) || (defined(VK_VERSION_1_3) && VK_HEADER_VERSION >= 277)"
 fi
+
+enabled renderdoc && require_headers "renderdoc_app.h"
 
 if disabled vulkan; then
     disable libglslang libshaderc spirv_compiler
