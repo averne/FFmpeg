@@ -17,7 +17,8 @@ OBJS-$(CONFIG_FFV1_VULKAN_HWACCEL)  +=  vulkan/common.o \
 OBJS-$(CONFIG_PRORES_RAW_VULKAN_HWACCEL) += vulkan/common.o \
                                             vulkan/prores_raw.o
 
-OBJS-$(CONFIG_PRORES_VULKAN_HWACCEL) += vulkan/common.o
+OBJS-$(CONFIG_PRORES_VULKAN_HWACCEL) += vulkan/common.o \
+                                        vulkan/prores_vld.o
 
 VULKAN = $(subst $(SRC_PATH)/,,$(wildcard $(SRC_PATH)/libavcodec/vulkan/*.comp))
 .SECONDARY: $(VULKAN:.comp=.c)
