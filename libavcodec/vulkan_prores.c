@@ -88,12 +88,6 @@ static int vk_prores_start_frame(AVCodecContext          *avctx,
     ProresVkSliceContext *slice_context;
     int i, err;
 
-#ifdef CONFIG_RENDERDOC
-    av_vk_start_capture(ctx->s.device);
-
-    av_log(avctx, AV_LOG_DEBUG, "Is capturing frame: %d\n", av_vk_is_capturing(ctx->s.device));
-#endif
-
     /* Host map the input slices data if supported */
     if (ctx->s.extensions & FF_VK_EXT_EXTERNAL_HOST_MEMORY)
         ff_vk_host_map_buffer(&ctx->s, &vp->slices_buf, buffer_ref->data,
@@ -185,15 +179,17 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     FFVulkanDecodePicture     *vp = &pp->vp;
 
     ProresVkParameters pd;
-    FFVkBuffer *slice_context;
+    FFVkBuffer *slice_data, *slice_offsets, *slice_context;
     VkImageMemoryBarrier2 img_bar[AV_NUM_DATA_POINTERS];
     VkBufferMemoryBarrier2 buf_bar[2];
     int nb_img_bar = 0, nb_buf_bar = 0, err;
 
+    slice_data    = (FFVkBuffer *)vp->slices_buf->data;
+    slice_offsets = (FFVkBuffer *)pp->slice_offset_buf->data;
     slice_context = (FFVkBuffer *)pp->slice_context_buf->data;
 
     pd = (ProresVkParameters) {
-        .slice_data      = ((FFVkBuffer *)vp->slices_buf->data)->address,
+        .slice_data      = slice_data->address,
         .bitstream_start = pp->bitstream_start,
         .bitstream_size  = pp->bitstream_size,
 
@@ -215,16 +211,17 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     RET(ff_vk_exec_mirror_sem_value(&ctx->s, exec, &vp->sem, &vp->sem_value,
                                     pr->frame));
 
-    RET(ff_vk_exec_add_dep_buf(&ctx->s, exec, &vp->slices_buf,        1, 1));
-    RET(ff_vk_exec_add_dep_buf(&ctx->s, exec, &pp->slice_offset_buf,  1, 1));
-    RET(ff_vk_exec_add_dep_buf(&ctx->s, exec, &pp->slice_context_buf, 1, 1));
+    RET(ff_vk_exec_add_dep_buf(&ctx->s, exec,
+                               (AVBufferRef *[]){ vp->slices_buf, pp->slice_offset_buf, pp->slice_context_buf },
+                               3, 0));
+    vp->slices_buf = pp->slice_offset_buf = pp->slice_context_buf = NULL;
 
     /* Input frame barrier */
     nb_img_bar = 0;
     ff_vk_frame_barrier(&ctx->s, exec, pr->frame, img_bar, &nb_img_bar,
                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                        VK_ACCESS_SHADER_WRITE_BIT,
+                        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
                         VK_IMAGE_LAYOUT_GENERAL,
                         VK_QUEUE_FAMILY_IGNORED);
 
@@ -283,12 +280,12 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     /* Entropy decode */
     ff_vk_shader_update_desc_buffer(&ctx->s, exec, &pv->vld,
                                     0, 0, 0,
-                                    (FFVkBuffer *)pp->slice_offset_buf->data,
+                                    slice_offsets,
                                     0, (pp->slice_num + 1) * sizeof(uint32_t),
                                     VK_FORMAT_UNDEFINED);
     ff_vk_shader_update_desc_buffer(&ctx->s, exec, &pv->vld,
                                     0, 1, 0,
-                                    (FFVkBuffer *)pp->slice_context_buf->data,
+                                    slice_context,
                                     0, pp->slice_num * sizeof(ProresVkSliceContext),
                                     VK_FORMAT_UNDEFINED);
     ff_vk_shader_update_img_array(&ctx->s, exec, &pv->vld,
@@ -306,10 +303,6 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     vk->CmdDispatch(exec->buf, AV_CEIL_RSHIFT(pr->slice_count / pr->mb_height, 3), AV_CEIL_RSHIFT(pr->mb_height, 3), 1);
 
     RET(ff_vk_exec_submit(&ctx->s, exec));
-
-#ifdef CONFIG_RENDERDOC
-    av_vk_end_capture(ctx->s.device);
-#endif
 
 fail:
     return err;
@@ -539,13 +532,8 @@ static void vk_prores_free_frame_priv(AVRefStructOpaque _hwctx, void *data)
 {
     AVHWDeviceContext    *dev_ctx = _hwctx.nc;
     ProresVulkanDecodePicture *pp = data;
-    FFVulkanDecodePicture     *vp = &pp->vp;
 
-    ff_vk_decode_free_frame(dev_ctx, vp);
-
-    av_buffer_unref(&vp->slices_buf);
-    av_buffer_unref(&pp->slice_offset_buf);
-    av_buffer_unref(&pp->slice_context_buf);
+    ff_vk_decode_free_frame(dev_ctx, &pp->vp);
 }
 
 const FFHWAccel ff_prores_vulkan_hwaccel = {
