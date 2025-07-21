@@ -22,6 +22,15 @@ uint to_signed(uint x)
     return (x >> 1) ^ -(x & 1);
 }
 
+/* 7.5.3 Pixel Arrangement */
+ivec2 pos_to_block(uint pos, bool chroma)
+{
+    if (chroma)
+        return ivec2(pos >> 1, pos & 1) << 3;
+    else
+        return ivec2(pos >> 1 & ~1 | (pos & 1), pos >> 1 & 1) << 3;
+}
+
 /* 7.1.1.1 Golomb Combination Codes */
 uint decode_codeword(inout GetBitContext gb, uint codebook)
 {
@@ -41,6 +50,7 @@ uint decode_codeword(inout GetBitContext gb, uint codebook)
 
 void decode_comp(in GetBitContext gb, in SliceContext ctx)
 {
+    uvec3 gid = gl_GlobalInvocationID;
     uint num_blocks  = ctx.mb_count << 2;
     ivec2 tex_coords = ivec2(ctx.mb_x, ctx.mb_y) << 4;
 
@@ -48,7 +58,7 @@ void decode_comp(in GetBitContext gb, in SliceContext ctx)
     {
         /* First coeff */
         uint c = to_signed(decode_codeword(gb, 0x650));
-        imageStore(dst[gl_LocalInvocationID.z], tex_coords, uvec4(c & 0xffff));
+        imageStore(dst[gid.z], tex_coords, uvec4(c & 0xffff));
 
         /**
          * Table 9, encoded as (last_rice_q << 0) | (krice or kexp << 4) | ((kexp or kexp + 1) << 8)
@@ -61,11 +71,10 @@ void decode_comp(in GetBitContext gb, in SliceContext ctx)
         for (int i = 1; i < num_blocks; ++i) {
             cw = decode_codeword(gb, dc_codebook[min(cw, 6)]);
 
-            int sign = int(prev_dc_diff) >> 31;
-            c += prev_dc_diff = (to_signed(cw) ^ sign) - sign;
+            int s = int(prev_dc_diff) >> 31;
+            c += prev_dc_diff = (to_signed(cw) ^ s) - s;
 
-            imageStore(dst[gl_LocalInvocationID.z],
-                       tex_coords + (ivec2(i >> 1 & ~1 | (i & 1), i >> 1 & 1) << 3),
+            imageStore(dst[gid.z], tex_coords + pos_to_block(i, gid.z != 0),
                        uvec4(c & 0xffff));
         }
     }
@@ -94,7 +103,7 @@ void decode_comp(in GetBitContext gb, in SliceContext ctx)
         uint block_mask  = num_blocks - 1;
         uint block_shift = findLSB(num_blocks);
 
-        uint pos = num_blocks - 1, run = 4, level = 1, sign;
+        uint pos = num_blocks - 1, run = 4, level = 1, s;
         while (pos < num_blocks << 6) {
             uint left = left_bits(gb);
             if (left <= 0 || (left < 32 && show_bits(gb, left) == 0))
@@ -102,16 +111,15 @@ void decode_comp(in GetBitContext gb, in SliceContext ctx)
 
             run   = decode_codeword(gb, ac_run_codebook  [min(run,   15)]);
             level = decode_codeword(gb, ac_level_codebook[min(level, 8 )]);
-            sign  = get_bits(gb, 1);
+            s     = get_bits(gb, 1);
 
             pos += run + 1;
 
             uint bidx  = pos & block_mask, scan = scan_progressive[pos >> block_shift];
-            ivec2 spos = ivec2(bidx >> 1 & ~1 | (bidx & 1), bidx >> 1 & 1) << 3;
+            ivec2 spos = pos_to_block(bidx, gid.z != 0);
             ivec2 bpos = ivec2(scan & 0xf, scan >> 4);
 
-            imageStore(dst[gl_LocalInvocationID.z],
-                       tex_coords + spos + bpos,
+            imageStore(dst[gid.z], tex_coords + spos + bpos,
                        uvec4(((level + 1) ^ -sign) + sign & 0xffff));
         }
     }
@@ -146,7 +154,7 @@ void main(void)
         v_size = slice_size - hdr_size - y_size - u_size;
 
     GetBitContext gb;
-    switch (gl_LocalInvocationID.z) {
+    switch (gid.z) {
         case 0:
             init_get_bits(gb, u8buf(bs + hdr_size),                   y_size);
             break;
