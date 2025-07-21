@@ -48,7 +48,7 @@ uint decode_codeword(inout GetBitContext gb, uint codebook)
     }
 }
 
-void decode_comp(in GetBitContext gb, in SliceContext ctx)
+void decode_comp(in GetBitContext gb, in SliceContext ctx, uint qscale)
 {
     uvec3 gid = gl_GlobalInvocationID;
     uint num_blocks  = ctx.mb_count << 2;
@@ -58,7 +58,7 @@ void decode_comp(in GetBitContext gb, in SliceContext ctx)
     {
         /* First coeff */
         uint c = to_signed(decode_codeword(gb, 0x650));
-        imageStore(dst[gid.z], tex_coords, uvec4(c & 0xffff));
+        imageStore(dst[gid.z], tex_coords, uvec4((c * qscale) & 0xffff));
 
         /**
          * Table 9, encoded as (last_rice_q << 0) | (krice or kexp << 4) | ((kexp or kexp + 1) << 8)
@@ -75,7 +75,7 @@ void decode_comp(in GetBitContext gb, in SliceContext ctx)
             c += prev_dc_diff = (to_signed(cw) ^ s) - s;
 
             imageStore(dst[gid.z], tex_coords + pos_to_block(i, gid.z != 0),
-                       uvec4(c & 0xffff));
+                       uvec4((c * qscale) & 0xffff));
         }
     }
 
@@ -119,8 +119,9 @@ void decode_comp(in GetBitContext gb, in SliceContext ctx)
             ivec2 spos = pos_to_block(bidx, gid.z != 0);
             ivec2 bpos = ivec2(scan & 0xf, scan >> 4);
 
+            uint c = ((level + 1) ^ -s) + s;
             imageStore(dst[gid.z], tex_coords + spos + bpos,
-                       uvec4(((level + 1) ^ -sign) + sign & 0xffff));
+                       uvec4((c * qscale) & 0xffff));
         }
     }
 }
@@ -141,7 +142,7 @@ void main(void)
     uint hdr_size = 0, y_size = 0, u_size = 0, v_size = 0, qscale = 0;
     hdr_size = bs[0].v >> 3;
 
-    /* Quantization index and scale (see Table 15) */
+    /* Table 15 */
     uint qidx = clamp(bs[1].v, 1, 224);
     qscale = qidx > 128 ? (qidx - 96) << 2 : qidx;
 
@@ -166,9 +167,6 @@ void main(void)
             break;
     }
 
-    /* Store qscale for the iDCT shader */
-    slice_context[slice_idx].qscale = qscale;
-
-    /* Perform entropy decoding and inverse scanning */
-    decode_comp(gb, slice_context[slice_idx]);
+    /* Entropy decoding, inverse scanning, first part of inverse quantization */
+    decode_comp(gb, slice_context[slice_idx], qscale);
 }

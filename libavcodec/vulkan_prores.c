@@ -69,7 +69,6 @@ typedef struct {
     uint32_t mb_x;
     uint32_t mb_y;
     uint32_t mb_count;
-    uint32_t qscale;
 } ProresVkSliceContext;
 
 static int vk_prores_start_frame(AVCodecContext          *avctx,
@@ -217,7 +216,6 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     vp->slices_buf = pp->slice_offset_buf = pp->slice_context_buf = NULL;
 
     /* Input frame barrier */
-    nb_img_bar = 0;
     ff_vk_frame_barrier(&ctx->s, exec, pr->frame, img_bar, &nb_img_bar,
                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -227,9 +225,12 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
 
     vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
         .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .pBufferMemoryBarriers    = buf_bar,
+        .bufferMemoryBarrierCount = nb_buf_bar,
         .pImageMemoryBarriers     = img_bar,
         .imageMemoryBarrierCount  = nb_img_bar,
     });
+    nb_img_bar = nb_buf_bar = 0;
 
     /* Reset */
     ff_vk_shader_update_img_array(&ctx->s, exec, &pv->reset,
@@ -243,7 +244,6 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     vk->CmdDispatch(exec->buf, pr->mb_width << 1, pr->mb_height << 1, 1);
 
     /* Input frame barrier after reset */
-    nb_img_bar = 0;
     ff_vk_frame_barrier(&ctx->s, exec, pr->frame, img_bar, &nb_img_bar,
                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -276,6 +276,7 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
         .pImageMemoryBarriers     = img_bar,
         .imageMemoryBarrierCount  = nb_img_bar,
     });
+    nb_img_bar = nb_buf_bar = 0;
 
     /* Entropy decode */
     ff_vk_shader_update_desc_buffer(&ctx->s, exec, &pv->vld,
@@ -300,7 +301,7 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
 
     ff_vk_exec_bind_shader(&ctx->s, exec, &pv->vld);
 
-    vk->CmdDispatch(exec->buf, AV_CEIL_RSHIFT(pr->slice_count / pr->mb_height, 3), AV_CEIL_RSHIFT(pr->mb_height, 3), 1);
+    vk->CmdDispatch(exec->buf, AV_CEIL_RSHIFT(pr->slice_count / pr->mb_height, 3), AV_CEIL_RSHIFT(pr->mb_height, 3), 3);
 
     RET(ff_vk_exec_submit(&ctx->s, exec));
 
@@ -314,7 +315,6 @@ static int add_shared_code(FFVulkanShader *shd)
     GLSLC(1,     uint mb_x;                                        );
     GLSLC(1,     uint mb_y;                                        );
     GLSLC(1,     uint mb_count;                                    );
-    GLSLC(1,     uint qscale;                                      );
     GLSLC(0, };                                                    );
 
     return 0;
@@ -405,7 +405,7 @@ static int init_vld_shader(AVCodecContext *avctx, FFVulkanContext *s,
                           VK_SHADER_STAGE_COMPUTE_BIT,
                           (const char *[]) { "GL_EXT_buffer_reference",
                                              "GL_EXT_buffer_reference2" }, 2,
-                          8, 8, 3,
+                          8, 8, 1,
                           0));
 
     /* Common code */
