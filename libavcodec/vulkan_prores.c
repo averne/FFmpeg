@@ -27,6 +27,7 @@
 extern const char *ff_source_common_comp;
 extern const char *ff_source_prores_reset_comp;
 extern const char *ff_source_prores_vld_comp;
+extern const char *ff_source_prores_idct_comp;
 
 const FFVulkanDecodeDescriptor ff_vk_dec_prores_desc = {
     .codec_id         = AV_CODEC_ID_PRORES,
@@ -48,6 +49,7 @@ typedef struct ProresVulkanDecodePicture {
 typedef struct ProresVulkanDecodeContext {
     FFVulkanShader reset;
     FFVulkanShader vld;
+    FFVulkanShader idct;
 
     AVBufferPool *slice_offset_pool;
     AVBufferPool *slice_context_pool;
@@ -63,6 +65,10 @@ typedef struct ProresVkParameters {
     uint32_t mb_width;
     uint32_t mb_height;
     uint32_t alpha_info;
+    uint32_t depth;
+
+    uint8_t qmat_luma  [8][8];
+    uint8_t qmat_chroma[8][8];
 } ProresVkParameters;
 
 typedef struct {
@@ -197,7 +203,11 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
         .mb_width        = pr->mb_width,
         .mb_height       = pr->mb_height,
         .alpha_info      = pr->alpha_info,
+        .depth           = avctx->bits_per_raw_sample,
     };
+
+    memcpy(pd.qmat_luma,   pr->qmat_luma,   sizeof(pd.qmat_luma  ));
+    memcpy(pd.qmat_chroma, pr->qmat_chroma, sizeof(pd.qmat_chroma));
 
     FFVkExecContext *exec = ff_vk_exec_get(&ctx->s, &ctx->exec_pool);
     RET(ff_vk_exec_start(&ctx->s, exec));
@@ -303,6 +313,39 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
 
     vk->CmdDispatch(exec->buf, AV_CEIL_RSHIFT(pr->slice_count / pr->mb_height, 3), AV_CEIL_RSHIFT(pr->mb_height, 3), 3);
 
+    /* Synchronize vld and idct shaders */
+    nb_img_bar = 0;
+    ff_vk_frame_barrier(&ctx->s, exec, pr->frame, img_bar, &nb_img_bar,
+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                        VK_IMAGE_LAYOUT_GENERAL,
+                        VK_QUEUE_FAMILY_IGNORED);
+
+    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
+        .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .pBufferMemoryBarriers    = buf_bar,
+        .bufferMemoryBarrierCount = nb_buf_bar,
+        .pImageMemoryBarriers     = img_bar,
+        .imageMemoryBarrierCount  = nb_img_bar,
+    });
+    nb_img_bar = nb_buf_bar = 0;
+
+    /* Inverse transform */
+    ff_vk_shader_update_img_array(&ctx->s, exec, &pv->idct,
+                                  pr->frame, vp->view.out,
+                                  0, 0,
+                                  VK_IMAGE_LAYOUT_GENERAL,
+                                  VK_NULL_HANDLE);
+
+    ff_vk_exec_bind_shader(&ctx->s, exec, &pv->idct);
+
+    ff_vk_shader_update_push_const(&ctx->s, exec, &pv->idct,
+                                   VK_SHADER_STAGE_COMPUTE_BIT,
+                                   0, sizeof(pd), &pd);
+
+    vk->CmdDispatch(exec->buf, pr->mb_width >> 1, pr->mb_height, 3);
+
     RET(ff_vk_exec_submit(&ctx->s, exec));
 
 fail:
@@ -332,6 +375,10 @@ static int add_push_data(FFVulkanShader *shd)
     GLSLC(1,    uint  mb_width;                                    );
     GLSLC(1,    uint  mb_height;                                   );
     GLSLC(1,    uint  alpha_info;                                  );
+    GLSLC(1,    uint  depth;                                       );
+    GLSLC(0,                                                       );
+    GLSLC(1,    uint8_t qmat_luma  [8][8];                         );
+    GLSLC(1,    uint8_t qmat_chroma[8][8];                         );
     GLSLC(0, };                                                    );
 
     return ff_vk_shader_add_push_const(shd, 0, sizeof(ProresVkParameters),
@@ -460,12 +507,67 @@ fail:
     return 0;
 }
 
+static int init_idct_shader(AVCodecContext *avctx, FFVulkanContext *s,
+                           FFVkExecPool *pool, FFVkSPIRVCompiler *spv,
+                           AVHWFramesContext *out_frames_ctx,
+                           FFVulkanShader *shd)
+{
+    FFVulkanDescriptorSetBinding *desc_set;
+    uint8_t *spv_data;
+    size_t spv_len;
+    void *spv_opaque = NULL;
+    int err;
+
+    RET(ff_vk_shader_init(s, shd, "prores_dec_idct",
+                          VK_SHADER_STAGE_COMPUTE_BIT,
+                          (const char *[]) { "GL_EXT_buffer_reference",
+                                             "GL_EXT_buffer_reference2" }, 2,
+                          32, 2, 1,
+                          0));
+
+    /* Common code */
+    RET(add_shared_code(shd));
+    GLSLD(ff_source_common_comp);
+
+    /* Push constants layout */
+    RET(add_push_data(shd));
+
+    desc_set = (FFVulkanDescriptorSetBinding []) {
+        {
+            .name       = "dst",
+            .type       = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .dimensions = 2,
+            .mem_layout = ff_vk_shader_rep_fmt(out_frames_ctx->sw_format,
+                                               FF_VK_REP_NATIVE),
+            .elems      = av_pix_fmt_count_planes(out_frames_ctx->sw_format),
+            .stages     = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+    };
+    RET(ff_vk_shader_add_descriptor_set(s, shd, desc_set, 1, 1, 0));
+
+    /* Main code */
+    GLSLD(ff_source_prores_idct_comp);
+
+    RET(spv->compile_shader(s, spv, shd, &spv_data, &spv_len, "main",
+                            &spv_opaque));
+    RET(ff_vk_shader_link(s, shd, spv_data, spv_len, "main"));
+
+    RET(ff_vk_shader_register_exec(s, pool, shd));
+
+fail:
+    if (spv_opaque)
+        spv->free_shader(spv, &spv_opaque);
+
+    return 0;
+}
+
 static void vk_decode_prores_uninit(FFVulkanDecodeShared *ctx)
 {
     ProresVulkanDecodeContext *pv = ctx->sd_ctx;
 
     ff_vk_shader_free(&ctx->s, &pv->reset);
     ff_vk_shader_free(&ctx->s, &pv->vld);
+    ff_vk_shader_free(&ctx->s, &pv->idct);
 
     av_buffer_pool_uninit(&pv->slice_offset_pool);
     av_buffer_pool_uninit(&pv->slice_context_pool);
@@ -517,6 +619,10 @@ static int vk_decode_prores_init(AVCodecContext *avctx)
     RET(init_vld_shader(avctx, &ctx->s, &ctx->exec_pool, spv,
                         (AVHWFramesContext *)avctx->hw_frames_ctx->data,
                         &pv->vld));
+
+    RET(init_idct_shader(avctx, &ctx->s, &ctx->exec_pool, spv,
+                         (AVHWFramesContext *)avctx->hw_frames_ctx->data,
+                         &pv->idct));
 
     av_log(avctx, AV_LOG_DEBUG, "Initialized Vulkan-Prores decoder\n");
 
