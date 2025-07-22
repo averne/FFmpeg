@@ -867,6 +867,7 @@ const FFCodec ff_prores_decoder = {
     FF_CODEC_DECODE_CB(decode_frame),
     UPDATE_THREAD_CONTEXT(update_thread_context),
     .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_SLICE_THREADS | AV_CODEC_CAP_FRAME_THREADS,
+    .caps_internal  = FF_CODEC_CAP_SKIP_FRAME_FILL_PARAM,
     .p.profiles     = NULL_IF_CONFIG_SMALL(ff_prores_profiles),
 #if HWACCEL_MAX
     .hw_configs     = (const AVCodecHWConfigInternal *const []) {
