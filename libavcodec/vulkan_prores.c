@@ -601,15 +601,6 @@ static int vk_decode_prores_init(AVCodecContext *avctx)
     FFVkSPIRVCompiler *spv;
     int err;
 
-    switch (avctx->profile) {
-        case AV_PROFILE_PRORES_4444:
-        case AV_PROFILE_PRORES_XQ:
-            break;
-        default:
-            av_log(avctx, AV_LOG_ERROR, "Profile is not supported!\n");
-            return AVERROR(ENOTSUP);
-    }
-
     spv = ff_vk_spirv_init();
     if (!spv) {
         av_log(avctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
