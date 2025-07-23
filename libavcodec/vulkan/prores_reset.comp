@@ -18,8 +18,14 @@
 
 void main(void)
 {
-    /* Clear output planes to 0 */
-    imageStore(dst[0], ivec2(gl_GlobalInvocationID), uvec4(0));
-    imageStore(dst[1], ivec2(gl_GlobalInvocationID), uvec4(0));
-    imageStore(dst[2], ivec2(gl_GlobalInvocationID), uvec4(0));
+    uvec3 gid = gl_GlobalInvocationID;
+
+    /* Clear luma plane */
+    imageStore(dst[0], ivec2(gid), uvec4(0));
+
+    /* Clear chroma plane */
+    if (gid.x < mb_width << (4 - log2_chroma_w)) {
+        imageStore(dst[1], ivec2(gid), uvec4(0));
+        imageStore(dst[2], ivec2(gid), uvec4(0));
+    }
 }

@@ -51,8 +51,10 @@ uint decode_codeword(inout GetBitContext gb, uint codebook)
 void decode_comp(in GetBitContext gb, in SliceContext ctx, uint qscale)
 {
     uvec3 gid = gl_GlobalInvocationID;
-    uint num_blocks  = ctx.mb_count << 2;
-    ivec2 tex_coords = ivec2(ctx.mb_x, ctx.mb_y) << 4;
+    uint chroma_shift = gid.z != 0 ? log2_chroma_w : 0;
+
+    uint num_blocks  = ctx.mb_count << (2 - chroma_shift);
+    ivec2 tex_coords = ivec2(ctx.mb_x << (4 - chroma_shift), ctx.mb_y << 4);
 
     /* 7.1.1.3 DC Coefficients */
     {

@@ -64,8 +64,9 @@ typedef struct ProresVkParameters {
     uint32_t slice_height;
     uint32_t mb_width;
     uint32_t mb_height;
-    uint32_t alpha_info;
+    uint32_t log2_chroma_w;
     uint32_t depth;
+    uint32_t alpha_info;
 
     uint8_t qmat_luma  [8][8];
     uint8_t qmat_chroma[8][8];
@@ -188,6 +189,11 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     VkImageMemoryBarrier2 img_bar[AV_NUM_DATA_POINTERS];
     VkBufferMemoryBarrier2 buf_bar[2];
     int nb_img_bar = 0, nb_buf_bar = 0, err;
+    const AVPixFmtDescriptor *pix_desc;
+
+    pix_desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
+    if (!pix_desc)
+        return AVERROR(EINVAL);
 
     slice_data    = (FFVkBuffer *)vp->slices_buf->data;
     slice_offsets = (FFVkBuffer *)pp->slice_offset_buf->data;
@@ -202,8 +208,9 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
         .slice_height    = pr->mb_height,
         .mb_width        = pr->mb_width,
         .mb_height       = pr->mb_height,
-        .alpha_info      = pr->alpha_info,
+        .log2_chroma_w   = pix_desc->log2_chroma_w,
         .depth           = avctx->bits_per_raw_sample,
+        .alpha_info      = pr->alpha_info,
     };
 
     memcpy(pd.qmat_luma,   pr->qmat_luma,   sizeof(pd.qmat_luma  ));
@@ -248,6 +255,10 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
                                   0, 0,
                                   VK_IMAGE_LAYOUT_GENERAL,
                                   VK_NULL_HANDLE);
+
+    ff_vk_shader_update_push_const(&ctx->s, exec, &pv->reset,
+                                   VK_SHADER_STAGE_COMPUTE_BIT,
+                                   0, sizeof(pd), &pd);
 
     ff_vk_exec_bind_shader(&ctx->s, exec, &pv->reset);
 
@@ -374,8 +385,9 @@ static int add_push_data(FFVulkanShader *shd)
     GLSLC(1,    uint  slice_height;                                );
     GLSLC(1,    uint  mb_width;                                    );
     GLSLC(1,    uint  mb_height;                                   );
-    GLSLC(1,    uint  alpha_info;                                  );
+    GLSLC(1,    uint  log2_chroma_w;                               );
     GLSLC(1,    uint  depth;                                       );
+    GLSLC(1,    uint  alpha_info;                                  );
     GLSLC(0,                                                       );
     GLSLC(1,    uint8_t qmat_luma  [8][8];                         );
     GLSLC(1,    uint8_t qmat_chroma[8][8];                         );
@@ -398,12 +410,17 @@ static int init_reset_shader(AVCodecContext *avctx, FFVulkanContext *s,
 
     RET(ff_vk_shader_init(s, shd, "prores_dec_reset",
                           VK_SHADER_STAGE_COMPUTE_BIT,
-                          NULL, 0,
+                          (const char *[]) { "GL_EXT_buffer_reference",
+                                             "GL_EXT_buffer_reference2" }, 2,
                           8, 8, 1,
                           0));
 
     /* Common code */
     RET(add_shared_code(shd));
+    GLSLD(ff_source_common_comp);
+
+    /* Push constants layout */
+    RET(add_push_data(shd));
 
     desc_set = (FFVulkanDescriptorSetBinding []) {
         {

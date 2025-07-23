@@ -70,8 +70,9 @@ void main(void)
 {
     uvec3 gid = gl_GlobalInvocationID, lid = gl_LocalInvocationID;
     uint comp = gid.z, block = (lid.y << 2) | (lid.x >> 3), idx = lid.x & 0x7;
+    uint chroma_shift = comp != 0 ? log2_chroma_w : 0;
 
-    if (gid.x > mb_width << 4)
+    if (gid.x > mb_width << (4 - chroma_shift))
         return;
 
     /* Coalesced load of DCT coeffs in shared memory, second part of inverse quantization */
@@ -90,12 +91,14 @@ void main(void)
     barrier();
     idct(block, idx, 9);
 
+    float offset = 1 << (depth - 1);
+    int maxv = (1 << depth) - 1;
+
     /* 7.5.1 Color Component Samples. Rescale, clamp and write back to global memory */
     barrier();
     [[unroll]]
     for (uint i = 0; i < 8; ++i) {
-        int v = int(blocks[block][i * 9 + idx] + float(1 << (depth - 1)));
-        imageStore(dst[comp], ivec2(gid.x, (gid.y << 3) | i),
-                   uvec4(clamp(v, 0, (1 << depth) - 1)));
+        int v = int(blocks[block][i * 9 + idx] + offset);
+        imageStore(dst[comp], ivec2(gid.x, (gid.y << 3) | i), uvec4(clamp(v, 0, maxv)));
     }
 }
