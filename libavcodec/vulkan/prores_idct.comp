@@ -19,6 +19,22 @@
 /* One macroblock, padded to avoid bank conflicts */
 shared float blocks[4*2][8*(8+1)];
 
+uint get_px(uint tex_idx, ivec2 pos) {
+#ifndef INTERLACED
+    return imageLoad(dst[tex_idx], pos).x;
+#else
+    return imageLoad(dst[tex_idx], ivec2(pos.x, (pos.y << 1) + bottom_field)).x;
+#endif
+}
+
+void put_px(uint tex_idx, ivec2 pos, uint v) {
+#ifndef INTERLACED
+    imageStore(dst[tex_idx], pos, uvec4(v));
+#else
+    imageStore(dst[tex_idx], ivec2(pos.x, (pos.y << 1) + bottom_field), uvec4(v));
+#endif
+}
+
 // https://github.com/NVIDIA/cuda-samples/blob/master/Samples/2_Concepts_and_Techniques/dct8x8/dct8x8_kernel2.cuh
 #define C_a 1.387039845322148f     //!< a = (2^0.5) * cos(    pi / 16);
 #define C_b 1.306562964876377f     //!< b = (2^0.5) * cos(    pi /  8);
@@ -78,7 +94,7 @@ void main(void)
     /* Coalesced load of DCT coeffs in shared memory, second part of inverse quantization */
     [[unroll]]
     for (uint i = 0; i < 8; ++i) {
-        int v = sign_extend(int(imageLoad(dst[comp], ivec2(gid.x, (gid.y << 3) | i)).x), 16);
+        int v = sign_extend(int(get_px(comp, ivec2(gid.x, (gid.y << 3) | i))), 16);
         int w = comp == 0 ? qmat_luma[i][idx] : qmat_chroma[i][idx];
         blocks[block][i * 9 + idx] = float(v * w);
     }
@@ -99,6 +115,6 @@ void main(void)
     [[unroll]]
     for (uint i = 0; i < 8; ++i) {
         float v = blocks[block][i * 9 + idx] * fact + off;
-        imageStore(dst[comp], ivec2(gid.x, (gid.y << 3) | i), uvec4(clamp(int(v), 0, maxv)));
+        put_px(comp, ivec2(gid.x, (gid.y << 3) | i), clamp(int(v), 0, maxv));
     }
 }

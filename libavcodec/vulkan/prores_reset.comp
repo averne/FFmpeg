@@ -19,13 +19,18 @@
 void main(void)
 {
     uvec3 gid = gl_GlobalInvocationID;
+#ifndef INTERLACED
+    ivec2 pos = ivec2(gid);
+#else
+    ivec2 pos = ivec2(gid.x, (gid.y << 1) + bottom_field);
+#endif
 
     /* Clear luma plane */
-    imageStore(dst[0], ivec2(gid), uvec4(0));
+    imageStore(dst[0], pos, uvec4(0));
 
     /* Clear chroma plane */
     if (gid.x < mb_width << (4 - log2_chroma_w)) {
-        imageStore(dst[1], ivec2(gid), uvec4(0));
-        imageStore(dst[2], ivec2(gid), uvec4(0));
+        imageStore(dst[1], pos, uvec4(0));
+        imageStore(dst[2], pos, uvec4(0));
     }
 }
