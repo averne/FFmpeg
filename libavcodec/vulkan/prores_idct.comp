@@ -16,7 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* One macroblock, padded to avoid bank conflicts */
+/* Two macroblocks, padded to avoid bank conflicts */
 shared float blocks[4*2][8*(8+1)];
 
 uint get_px(uint tex_idx, ivec2 pos) {

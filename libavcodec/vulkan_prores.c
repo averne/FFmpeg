@@ -62,23 +62,23 @@ typedef struct ProresVkParameters {
     uint32_t bitstream_start;
     uint32_t bitstream_size;
 
-    uint32_t slice_width;
-    uint32_t slice_height;
-    uint32_t mb_width;
-    uint32_t mb_height;
-    uint32_t log2_chroma_w;
-    uint32_t depth;
-    uint32_t alpha_info;
-    uint32_t bottom_field;
+    uint16_t slice_width;
+    uint16_t slice_height;
+    uint16_t mb_width;
+    uint16_t mb_height;
+    uint8_t  log2_chroma_w;
+    uint8_t  depth;
+    uint8_t  alpha_info;
+    uint8_t  bottom_field;
 
-    uint8_t qmat_luma  [8][8];
-    uint8_t qmat_chroma[8][8];
+    uint8_t  qmat_luma  [8][8];
+    uint8_t  qmat_chroma[8][8];
 } ProresVkParameters;
 
 typedef struct {
-    uint32_t mb_x;
-    uint32_t mb_y;
-    uint32_t mb_count;
+    uint16_t mb_x;
+    uint16_t mb_y;
+    uint8_t  mb_count;
 } ProresVkSliceContext;
 
 static int vk_prores_start_frame(AVCodecContext          *avctx,
@@ -381,9 +381,9 @@ fail:
 static int add_shared_code(FFVulkanShader *shd)
 {
     GLSLC(0, struct SliceContext {                                 );
-    GLSLC(1,     uint mb_x;                                        );
-    GLSLC(1,     uint mb_y;                                        );
-    GLSLC(1,     uint mb_count;                                    );
+    GLSLC(1,     uint16_t mb_x;                                    );
+    GLSLC(1,     uint16_t mb_y;                                    );
+    GLSLC(1,     uint8_t  mb_count;                                );
     GLSLC(0, };                                                    );
 
     return 0;
@@ -392,22 +392,22 @@ static int add_shared_code(FFVulkanShader *shd)
 static int add_push_data(FFVulkanShader *shd)
 {
     GLSLC(0, layout(push_constant, scalar) uniform pushConstants { );
-    GLSLC(1,    u8buf slice_data;                                  );
-    GLSLC(1,    uint  slice_start;                                 );
-    GLSLC(1,    uint  bitstream_start;                             );
-    GLSLC(1,    uint  bitstream_size;                              );
+    GLSLC(1,    u8buf    slice_data;                               );
+    GLSLC(1,    uint     slice_start;                              );
+    GLSLC(1,    uint     bitstream_start;                          );
+    GLSLC(1,    uint     bitstream_size;                           );
     GLSLC(0,                                                       );
-    GLSLC(1,    uint  slice_width;                                 );
-    GLSLC(1,    uint  slice_height;                                );
-    GLSLC(1,    uint  mb_width;                                    );
-    GLSLC(1,    uint  mb_height;                                   );
-    GLSLC(1,    uint  log2_chroma_w;                               );
-    GLSLC(1,    uint  depth;                                       );
-    GLSLC(1,    uint  alpha_info;                                  );
-    GLSLC(1,    uint  bottom_field;                                );
+    GLSLC(1,    uint16_t slice_width;                              );
+    GLSLC(1,    uint16_t slice_height;                             );
+    GLSLC(1,    uint16_t mb_width;                                 );
+    GLSLC(1,    uint16_t mb_height;                                );
+    GLSLC(1,    uint8_t  log2_chroma_w;                            );
+    GLSLC(1,    uint8_t  depth;                                    );
+    GLSLC(1,    uint8_t  alpha_info;                               );
+    GLSLC(1,    uint8_t  bottom_field;                             );
     GLSLC(0,                                                       );
-    GLSLC(1,    uint8_t qmat_luma  [8][8];                         );
-    GLSLC(1,    uint8_t qmat_chroma[8][8];                         );
+    GLSLC(1,    uint8_t  qmat_luma  [8][8];                        );
+    GLSLC(1,    uint8_t  qmat_chroma[8][8];                        );
     GLSLC(0, };                                                    );
 
     return ff_vk_shader_add_push_const(shd, 0, sizeof(ProresVkParameters),
