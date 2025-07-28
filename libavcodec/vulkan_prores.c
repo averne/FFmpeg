@@ -40,7 +40,6 @@ typedef struct ProresVulkanDecodePicture {
 
     AVBufferRef *slice_offset_buf;
     AVBufferRef *slice_context_buf;
-    uint32_t slice_start;
     uint32_t slice_num;
 
     uint32_t bitstream_start;
@@ -58,8 +57,6 @@ typedef struct ProresVulkanDecodeContext {
 
 typedef struct ProresVkParameters {
     VkDeviceAddress slice_data;
-    uint32_t slice_start;
-    uint32_t bitstream_start;
     uint32_t bitstream_size;
 
     uint16_t slice_width;
@@ -105,24 +102,22 @@ static int vk_prores_start_frame(AVCodecContext          *avctx,
                               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
     /* Allocate slice offsets buffer */
-    if (!pp->slice_offset_buf)
-        err = ff_vk_get_pooled_buffer(&ctx->s, &pv->slice_offset_pool,
-                                      &pp->slice_offset_buf,
-                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                                      NULL, (pr->slice_count + 1) * sizeof(uint32_t) << (pr->frame_type != 0),
-                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
-                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    err = ff_vk_get_pooled_buffer(&ctx->s, &pv->slice_offset_pool,
+                                  &pp->slice_offset_buf,
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                                  NULL, (pr->slice_count + 1) * sizeof(uint32_t),
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
     /* Allocate slice context buffer */
-    if (!pp->slice_context_buf)
-        err = ff_vk_get_pooled_buffer(&ctx->s, &pv->slice_context_pool,
-                                      &pp->slice_context_buf,
-                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                                      NULL, pr->slice_count * sizeof(ProresVkSliceContext) << (pr->frame_type != 0),
-                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
-                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    err = ff_vk_get_pooled_buffer(&ctx->s, &pv->slice_context_pool,
+                                  &pp->slice_context_buf,
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                                  NULL, pr->slice_count * sizeof(ProresVkSliceContext),
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     if (err < 0)
         return err;
 
@@ -132,7 +127,7 @@ static int vk_prores_start_frame(AVCodecContext          *avctx,
     if (err < 0)
         return err;
 
-    pp->slice_start = pp->slice_num;
+    pp->slice_num = 0;
     pp->bitstream_start = pp->bitstream_size = 0;
 
     slice_context_buf = (FFVkBuffer *)pp->slice_context_buf->data;
@@ -140,7 +135,7 @@ static int vk_prores_start_frame(AVCodecContext          *avctx,
     slice_context_buf->stage = VK_PIPELINE_STAGE_2_HOST_BIT;
 
     for (i = 0; i < pr->slice_count; ++i) {
-        slice_context[pp->slice_start + i] = (ProresVkSliceContext) {
+        slice_context[i] = (ProresVkSliceContext) {
             .mb_x     = pr->slices[i].mb_x,
             .mb_y     = pr->slices[i].mb_y,
             .mb_count = pr->slices[i].mb_count,
@@ -162,8 +157,8 @@ static int vk_prores_decode_slice(AVCodecContext *avctx,
     FFVkBuffer *slices_buf   = vp->slices_buf ? (FFVkBuffer *)vp->slices_buf->data : NULL;
 
     /* Skip picture header */
-    if (slices_buf && slices_buf->host_ref && pp->slice_start == pp->slice_num)
-        pp->bitstream_start = data - slices_buf->mapped_mem;
+    if (slices_buf && slices_buf->host_ref && !pp->slice_num)
+        pp->bitstream_size = data - slices_buf->mapped_mem;
 
     AV_WN32(slice_offset->mapped_mem + (pp->slice_num + 0) * sizeof(uint32_t),
             pp->bitstream_size);
@@ -200,6 +195,9 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     int nb_img_bar = 0, nb_buf_bar = 0, err;
     const AVPixFmtDescriptor *pix_desc;
 
+    if (!pp->slice_num)
+        return 0;
+
     pix_desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
     if (!pix_desc)
         return AVERROR(EINVAL);
@@ -214,8 +212,6 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
 
     pd = (ProresVkParameters) {
         .slice_data      = slice_data->address,
-        .slice_start     = pp->slice_start,
-        .bitstream_start = pp->bitstream_start,
         .bitstream_size  = pp->bitstream_size,
 
         .slice_width     = pr->slice_count / pr->mb_height,
@@ -245,6 +241,8 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     RET(ff_vk_exec_add_dep_buf(&ctx->s, exec,
                                (AVBufferRef *[]){ vp->slices_buf, pp->slice_offset_buf, pp->slice_context_buf },
                                3, 0));
+
+    /* Transfer ownership to the exec context */
     vp->slices_buf = pp->slice_offset_buf = pp->slice_context_buf = NULL;
 
     /* Input frame barrier */
@@ -393,8 +391,6 @@ static int add_push_data(FFVulkanShader *shd)
 {
     GLSLC(0, layout(push_constant, scalar) uniform pushConstants { );
     GLSLC(1,    u8buf    slice_data;                               );
-    GLSLC(1,    uint     slice_start;                              );
-    GLSLC(1,    uint     bitstream_start;                          );
     GLSLC(1,    uint     bitstream_size;                           );
     GLSLC(0,                                                       );
     GLSLC(1,    uint16_t slice_width;                              );

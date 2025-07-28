@@ -162,11 +162,11 @@ void main(void)
     if (gid.x >= slice_width || gid.y >= slice_height)
         return;
 
-    uint slice_idx = gid.y * slice_width + gid.x + slice_start;
+    uint slice_idx = gid.y * slice_width + gid.x;
     uint slice_off  = slice_offsets[slice_idx],
          slice_size = slice_offsets[slice_idx + 1] - slice_off;
 
-    u8buf bs = u8buf(slice_data + bitstream_start + slice_off);
+    u8buf bs = u8buf(slice_data + slice_off);
 
     /* Decode slice header */
     uint hdr_size = 0, y_size = 0, u_size = 0, v_size = 0, qscale = 0;
