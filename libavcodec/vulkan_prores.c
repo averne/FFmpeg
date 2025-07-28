@@ -368,7 +368,7 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
                                    VK_SHADER_STAGE_COMPUTE_BIT,
                                    0, sizeof(pd), &pd);
 
-    vk->CmdDispatch(exec->buf, pr->mb_width >> 1, pr->mb_height, 3);
+    vk->CmdDispatch(exec->buf, AV_CEIL_RSHIFT(pr->mb_width, 1), pr->mb_height, 3);
 
     RET(ff_vk_exec_submit(&ctx->s, exec));
 

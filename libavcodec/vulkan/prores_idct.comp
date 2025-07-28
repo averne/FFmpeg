@@ -87,16 +87,15 @@ void main(void)
     uvec3 gid = gl_GlobalInvocationID, lid = gl_LocalInvocationID;
     uint comp = gid.z, block = (lid.y << 2) | (lid.x >> 3), idx = lid.x & 0x7;
     uint chroma_shift = comp != 0 ? log2_chroma_w : 0;
-
-    if (gid.x > mb_width << (4 - chroma_shift))
-        return;
+    bool act = gid.x < mb_width << (4 - chroma_shift);
 
     /* Coalesced load of DCT coeffs in shared memory, second part of inverse quantization */
-    [[unroll]]
-    for (uint i = 0; i < 8; ++i) {
-        int v = sign_extend(int(get_px(comp, ivec2(gid.x, (gid.y << 3) | i))), 16);
-        int w = comp == 0 ? qmat_luma[i][idx] : qmat_chroma[i][idx];
-        blocks[block][i * 9 + idx] = float(v * w);
+    if (act) {
+        [[unroll]] for (uint i = 0; i < 8; ++i) {
+            int v = sign_extend(int(get_px(comp, ivec2(gid.x, (gid.y << 3) | i))), 16);
+            int w = comp == 0 ? qmat_luma[i][idx] : qmat_chroma[i][idx];
+            blocks[block][i * 9 + idx] = float(v * w);
+        }
     }
 
     /* Row-wise iDCT */
@@ -112,9 +111,10 @@ void main(void)
 
     /* 7.5.1 Color Component Samples. Rescale, clamp and write back to global memory */
     barrier();
-    [[unroll]]
-    for (uint i = 0; i < 8; ++i) {
-        float v = blocks[block][i * 9 + idx] * fact + off;
-        put_px(comp, ivec2(gid.x, (gid.y << 3) | i), clamp(int(v), 0, maxv));
+    if (act) {
+        [[unroll]] for (uint i = 0; i < 8; ++i) {
+            float v = blocks[block][i * 9 + idx] * fact + off;
+            put_px(comp, ivec2(gid.x, (gid.y << 3) | i), clamp(int(v), 0, maxv));
+        }
     }
 }
