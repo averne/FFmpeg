@@ -435,7 +435,7 @@ static int init_shader(AVCodecContext *avctx, FFVulkanContext *s,
     /* Push constants layout */
     RET(add_push_data(shd));
 
-    RET(ff_vk_shader_add_descriptor_set(s, shd, descs, num_descs, 1, 0));
+    RET(ff_vk_shader_add_descriptor_set(s, shd, descs, num_descs, 0, 0));
 
     if (interlaced)
         av_bprintf(&shd->src, "#define INTERLACED\n");
