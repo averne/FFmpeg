@@ -33,4 +33,6 @@ void main(void)
         imageStore(dst[1], pos, uvec4(0));
         imageStore(dst[2], pos, uvec4(0));
     }
+
+    /* Alpha plane doesn't need a clear because it is not sparsely encoded */
 }
