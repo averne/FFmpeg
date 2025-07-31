@@ -197,6 +197,15 @@ void main(void)
             break;
     }
 
+    /**
+     * Support for the grayscale "extension" in the prores_aw encoder.
+     * According to the spec, entropy coded data should never be empty,
+     * and instead contain at least the DC coefficients.
+     * This avoids undefined behavior.
+     */
+    if (left_bits(gb) == 0)
+        return;
+
     /* Entropy decoding, inverse scanning, first part of inverse quantization */
     decode_comp(gb, slice_context[slice_idx], qscale);
 }
