@@ -37,7 +37,8 @@ void decode_alpha(in GetBitContext gb, in SliceContext ctx) {
     uint num_cw_bits  = alpha_info == 1 ? 5 : 8,
          num_flc_bits = alpha_info == 1 ? 9 : 17;
 
-    uint alpha_rescale_lshift = depth - 8, alpha_rescale_rshift = 16 - depth;
+    uint alpha_rescale_lshift = alpha_info == 1 ? depth - 8 : 16,
+         alpha_rescale_rshift = 16 - depth;
 
     uint alpha = -1;
     for (uint pos = 0; pos < num_values;) {
@@ -78,15 +79,10 @@ void decode_alpha(in GetBitContext gb, in SliceContext ctx) {
         }
 
         /**
-         * Lavc doesn't support color and alpha with different precision,
+         * FFmpeg doesn't support color and alpha with different precision,
          * so we need to rescale to the color range.
          */
-#if ALPHA_DEPTH == 8
         uint val = (alpha << alpha_rescale_lshift) | (alpha >> alpha_rescale_rshift);
-#else
-        uint val = alpha >> alpha_rescale_rshift;
-#endif
-
         for (uint end = pos + run; pos < end; ++pos)
             put_px(3, base_pos + ivec2(pos & block_mask, pos >> block_shift), val & 0xffff);
     }
@@ -108,8 +104,6 @@ void main(void)
         ((uint(bs[2].v) << 8) | bs[3].v) +
         ((uint(bs[4].v) << 8) | bs[5].v) +
         ((uint(bs[6].v) << 8) | bs[7].v);
-
-    uint a_size = slice_size - skip_size;
 
     GetBitContext gb;
     init_get_bits(gb, u8buf(bs + skip_size), slice_size - skip_size);
