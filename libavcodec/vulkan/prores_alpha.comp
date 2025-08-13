@@ -25,14 +25,14 @@ void put_px(uint tex_idx, ivec2 pos, uint v) {
 }
 
 /* 7.1.2 Scanned Alpha */
-void decode_alpha(in GetBitContext gb, in SliceContext ctx) {
+void decode_alpha(in GetBitContext gb, uvec2 mb_pos, uint mb_count) {
     uvec3 gid = gl_GlobalInvocationID;
 
-    ivec2 base_pos = ivec2(ctx.mb_x, ctx.mb_y) << 4;
-    uint block_shift = findMSB(uint(ctx.mb_count)) + 4, block_mask = (1 << block_shift) - 1;
+    ivec2 base_pos = ivec2(mb_pos) << 4;
+    uint block_shift = findMSB(mb_count) + 4, block_mask = (1 << block_shift) - 1;
 
     uint mask = (1 << (4 << alpha_info)) - 1;
-    uint num_values = (ctx.mb_count << 4) * min(height - (gid.y << 4), 16);
+    uint num_values = (mb_count << 4) * min(height - (gid.y << 4), 16);
 
     uint num_cw_bits  = alpha_info == 1 ? 5 : 8,
          num_flc_bits = alpha_info == 1 ? 9 : 17;
@@ -108,5 +108,16 @@ void main(void)
     GetBitContext gb;
     init_get_bits(gb, u8buf(bs + skip_size), slice_size - skip_size);
 
-    decode_alpha(gb, slice_context[slice_idx]);
+    uint frac      = bitfieldExtract(uint(mb_width), 0, log2_slice_width),
+         num_extra = bitCount(frac);
+
+    uint diff = slice_width - gid.x - 1,
+         off  = max(int(diff - num_extra + 1) << 2, 0);
+
+    uint log2_width = min(findLSB(frac - diff >> diff) + diff + off, log2_slice_width);
+
+    uint mb_x = (min(gid.x, slice_width - num_extra) << log2_slice_width) +
+                (frac & (0xf << log2_width + 1));
+
+    decode_alpha(gb, uvec2(mb_x, gid.y), 1 << log2_width);
 }
