@@ -35,51 +35,46 @@ void put_px(uint tex_idx, ivec2 pos, uint v) {
 #endif
 }
 
-// https://github.com/NVIDIA/cuda-samples/blob/master/Samples/2_Concepts_and_Techniques/dct8x8/dct8x8_kernel2.cuh
-#define C_a 1.387039845322148f     //!< a = (2^0.5) * cos(    pi / 16);
-#define C_b 1.306562964876377f     //!< b = (2^0.5) * cos(    pi /  8);
-#define C_c 1.175875602419359f     //!< c = (2^0.5) * cos(3 * pi / 16);
-#define C_d 0.785694958387102f     //!< d = (2^0.5) * cos(5 * pi / 16);
-#define C_e 0.541196100146197f     //!< e = (2^0.5) * cos(3 * pi /  8);
-#define C_f 0.275899379282943f     //!< f = (2^0.5) * cos(7 * pi / 16);
-#define C_norm 0.3535533905932737f //!< 1 / (8^0.5)
-
 /* 7.4 Inverse Transform */
 void idct(uint block, uint offset, uint stride) {
-    float Vect0 = blocks[block][0*stride + offset];
-    float Vect1 = blocks[block][1*stride + offset];
-    float Vect2 = blocks[block][2*stride + offset];
-    float Vect3 = blocks[block][3*stride + offset];
-    float Vect4 = blocks[block][4*stride + offset];
-    float Vect5 = blocks[block][5*stride + offset];
-    float Vect6 = blocks[block][6*stride + offset];
-    float Vect7 = blocks[block][7*stride + offset];
+    float c0 = blocks[block][0*stride + offset];
+    float c1 = blocks[block][1*stride + offset];
+    float c2 = blocks[block][2*stride + offset];
+    float c3 = blocks[block][3*stride + offset];
+    float c4 = blocks[block][4*stride + offset];
+    float c5 = blocks[block][5*stride + offset];
+    float c6 = blocks[block][6*stride + offset];
+    float c7 = blocks[block][7*stride + offset];
 
-    float Y04P   = Vect0 + Vect4;
-    float Y2b6eP = C_b * Vect2 + C_e * Vect6;
+    float tmp1 = c6 * 1.4142134189605712891 + (c2 - c6);
+    float tmp2 = c6 * 1.4142134189605712891 - (c2 - c6);
 
-    float Y04P2b6ePP   = Y04P + Y2b6eP;
-    float Y04P2b6ePM   = Y04P - Y2b6eP;
-    float Y7f1aP3c5dPP = C_f * Vect7 + C_a * Vect1 + C_c * Vect3 + C_d * Vect5;
-    float Y7a1fM3d5cMP = C_a * Vect7 - C_f * Vect1 + C_d * Vect3 - C_c * Vect5;
+    float a1 = (c0 + c4) * 0.35355341434478759766 + tmp1 * 0.46193981170654296875;
+    float a4 = (c0 + c4) * 0.35355341434478759766 - tmp1 * 0.46193981170654296875;
 
-    float Y04M   = Vect0 - Vect4;
-    float Y2e6bM = C_e * Vect2 - C_b * Vect6;
+    float a3 = (c0 - c4) * 0.35355341434478759766 + tmp2 * 0.19134169816970825195;
+    float a2 = (c0 - c4) * 0.35355341434478759766 - tmp2 * 0.19134169816970825195;
 
-    float Y04M2e6bMP   = Y04M + Y2e6bM;
-    float Y04M2e6bMM   = Y04M - Y2e6bM;
-    float Y1c7dM3f5aPM = C_c * Vect1 - C_d * Vect7 - C_f * Vect3 - C_a * Vect5;
-    float Y1d7cP3a5fMM = C_d * Vect1 + C_c * Vect7 - C_a * Vect3 + C_f * Vect5;
+    float tmp3 = (c3 - c5) * 0.70710682868957519531 + c7;
+    float tmp4 = (c3 - c5) * 0.70710682868957519531 - c7;
 
-    blocks[block][0*stride + offset] = C_norm * (Y04P2b6ePP + Y7f1aP3c5dPP);
-    blocks[block][7*stride + offset] = C_norm * (Y04P2b6ePP - Y7f1aP3c5dPP);
-    blocks[block][4*stride + offset] = C_norm * (Y04P2b6ePM + Y7a1fM3d5cMP);
-    blocks[block][3*stride + offset] = C_norm * (Y04P2b6ePM - Y7a1fM3d5cMP);
+    float tmp5 = (c5 - c7) *  1.4142134189605712891 + (c5 - c7) + (c1 - c3);
+    float tmp6 = (c5 - c7) * -1.4142134189605712891 + (c5 - c7) + (c1 - c3);
 
-    blocks[block][1*stride + offset] = C_norm * (Y04M2e6bMP + Y1c7dM3f5aPM);
-    blocks[block][5*stride + offset] = C_norm * (Y04M2e6bMM - Y1d7cP3a5fMM);
-    blocks[block][2*stride + offset] = C_norm * (Y04M2e6bMM + Y1d7cP3a5fMM);
-    blocks[block][6*stride + offset] = C_norm * (Y04M2e6bMP - Y1c7dM3f5aPM);
+    float m1 = tmp3 *  2.6131260395050048828 + tmp5;
+    float m4 = tmp3 * -2.6131260395050048828 + tmp5;
+
+    float m2 = tmp4 *  1.0823919773101806641 + tmp6;
+    float m3 = tmp4 * -1.0823919773101806641 + tmp6;
+
+    blocks[block][0*stride + offset] = m1 *  0.49039259552955627441  + a1;
+    blocks[block][7*stride + offset] = m1 * -0.49039259552955627441  + a1;
+    blocks[block][1*stride + offset] = m2 *  0.41573479771614074707  + a2;
+    blocks[block][6*stride + offset] = m2 * -0.41573479771614074707  + a2;
+    blocks[block][2*stride + offset] = m3 *  0.27778509259223937988  + a3;
+    blocks[block][5*stride + offset] = m3 * -0.27778509259223937988  + a3;
+    blocks[block][3*stride + offset] = m4 *  0.097545139491558074951 + a4;
+    blocks[block][4*stride + offset] = m4 * -0.097545139491558074951 + a4;
 }
 
 void main(void)
