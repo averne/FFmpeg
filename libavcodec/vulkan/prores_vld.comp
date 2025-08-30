@@ -134,7 +134,7 @@ void decode_comp(in GetBitContext gb, uvec2 mb_pos, uint mb_count, uint qscale)
         uint block_mask  = num_blocks - 1;
         uint block_shift = findLSB(num_blocks);
 
-        uint pos = num_blocks - 1, run = 4, level = 1, s;
+        uint pos = num_blocks, run = 4, level = 1, s;
         while (pos < num_blocks << 6) {
             int left = left_bits(gb);
             if (left <= 0 || (left < 32 && show_bits(gb, left) == 0))
@@ -144,14 +144,23 @@ void decode_comp(in GetBitContext gb, uvec2 mb_pos, uint mb_count, uint qscale)
             level = decode_codeword(gb, ac_level_codebook[min(level, 8 )]);
             s     = get_bits(gb, 1);
 
-            pos += run + 1;
+            uint c = ((level + 1) ^ -s) + s, v = c * qscale & 0xffff;
+            for (uint end = pos + run; pos <= end; ++pos) {
+                uint bidx  = pos & block_mask, scan = scan_tbl[pos >> block_shift];
+                ivec2 spos = pos_to_block(bidx, is_luma);
+                ivec2 bpos = ivec2(scan & 0xf, scan >> 4);
 
+                put_px(gid.z, base_pos + spos + bpos, pos != end ? 0 : v);
+            }
+        }
+
+        /* The final run is not signaled */
+        for (; pos < num_blocks << 6; ++pos) {
             uint bidx  = pos & block_mask, scan = scan_tbl[pos >> block_shift];
             ivec2 spos = pos_to_block(bidx, is_luma);
             ivec2 bpos = ivec2(scan & 0xf, scan >> 4);
 
-            uint c = ((level + 1) ^ -s) + s;
-            put_px(gid.z, base_pos + spos + bpos, c * qscale & 0xffff);
+            put_px(gid.z, base_pos + spos + bpos, 0);
         }
     }
 }
