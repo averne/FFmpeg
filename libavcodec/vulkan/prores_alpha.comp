@@ -34,8 +34,8 @@ void decode_alpha(in GetBitContext gb, uvec2 mb_pos, uint mb_count) {
     uint mask = (1 << (4 << alpha_info)) - 1;
     uint num_values = (mb_count << 4) * min(height - (gid.y << 4), 16);
 
-    uint num_cw_bits  = alpha_info == 1 ? 5 : 8,
-         num_flc_bits = alpha_info == 1 ? 9 : 17;
+    int num_cw_bits  = alpha_info == 1 ? 5 : 8,
+        num_flc_bits = alpha_info == 1 ? 9 : 17;
 
     uint alpha_rescale_lshift = alpha_info == 1 ? depth - 8 : 16,
          alpha_rescale_rshift = 16 - depth;
@@ -106,7 +106,7 @@ void main(void)
         ((uint(bs[6].v) << 8) | bs[7].v);
 
     GetBitContext gb;
-    init_get_bits(gb, u8buf(bs + skip_size), slice_size - skip_size);
+    init_get_bits(gb, u8buf(bs + skip_size), int(slice_size - skip_size));
 
     uint frac      = bitfieldExtract(uint(mb_width), 0, log2_slice_width),
          num_extra = bitCount(frac);

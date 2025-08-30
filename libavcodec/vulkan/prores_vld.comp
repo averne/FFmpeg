@@ -40,13 +40,13 @@ uint to_signed(uint x)
 }
 
 /* 7.1.1.1 Golomb Combination Codes */
-uint decode_codeword(inout GetBitContext gb, uint codebook)
+uint decode_codeword(inout GetBitContext gb, int codebook)
 {
-    uint last_rice_q = bitfieldExtract(codebook, 0, 4),
-         krice       = bitfieldExtract(codebook, 4, 4),
-         kexp        = bitfieldExtract(codebook, 8, 4);
+    int last_rice_q = bitfieldExtract(codebook, 0, 4),
+        krice       = bitfieldExtract(codebook, 4, 4),
+        kexp        = bitfieldExtract(codebook, 8, 4);
 
-    uint q = 31 - findMSB(show_bits(gb, 32));
+    int q = 31 - findMSB(show_bits(gb, 32));
     if (q <= last_rice_q) {
         /* Golomb-Rice encoding */
         return (get_bits(gb, krice + q + 1) & ~(1 << krice)) + (q << krice);
@@ -136,7 +136,7 @@ void decode_comp(in GetBitContext gb, uvec2 mb_pos, uint mb_count, uint qscale)
 
         uint pos = num_blocks - 1, run = 4, level = 1, s;
         while (pos < num_blocks << 6) {
-            uint left = left_bits(gb);
+            int left = left_bits(gb);
             if (left <= 0 || (left < 32 && show_bits(gb, left) == 0))
                 break;
 
@@ -191,13 +191,13 @@ void main(void)
     GetBitContext gb;
     switch (gid.z) {
         case 0:
-            init_get_bits(gb, u8buf(bs + hdr_size),                   y_size);
+            init_get_bits(gb, u8buf(bs + hdr_size),                   int(y_size));
             break;
         case 1:
-            init_get_bits(gb, u8buf(bs + hdr_size + y_size),          u_size);
+            init_get_bits(gb, u8buf(bs + hdr_size + y_size),          int(u_size));
             break;
         case 2:
-            init_get_bits(gb, u8buf(bs + hdr_size + y_size + u_size), v_size);
+            init_get_bits(gb, u8buf(bs + hdr_size + y_size + u_size), int(v_size));
             break;
     }
 
