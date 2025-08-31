@@ -18,6 +18,7 @@ OBJS-$(CONFIG_PRORES_RAW_VULKAN_HWACCEL) += vulkan/common.o \
                                             vulkan/prores_raw.o
 
 OBJS-$(CONFIG_PRORES_VULKAN_HWACCEL) += vulkan/common.o \
+                                        vulkan/prores_reset.o \
                                         vulkan/prores_vld.o \
                                         vulkan/prores_idct.o
 
