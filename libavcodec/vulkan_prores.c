@@ -70,15 +70,9 @@ typedef struct ProresVkParameters {
     uint8_t  alpha_info;
     uint8_t  bottom_field;
 
-    uint8_t  qmat_luma  [8][8];
-    uint8_t  qmat_chroma[8][8];
+    uint8_t  qmat_luma  [64];
+    uint8_t  qmat_chroma[64];
 } ProresVkParameters;
-
-typedef struct {
-    uint16_t mb_x;
-    uint16_t mb_y;
-    uint8_t  mb_count;
-} ProresVkSliceContext;
 
 static int vk_prores_start_frame(AVCodecContext          *avctx,
                                  const AVBufferRef       *buffer_ref,
@@ -348,8 +342,8 @@ static int add_push_data(FFVulkanShader *shd)
     GLSLC(1,    uint8_t  alpha_info;                               );
     GLSLC(1,    uint8_t  bottom_field;                             );
     GLSLC(0,                                                       );
-    GLSLC(1,    uint8_t  qmat_luma  [8][8];                        );
-    GLSLC(1,    uint8_t  qmat_chroma[8][8];                        );
+    GLSLC(1,    uint8_t  qmat_luma  [8*8];                         );
+    GLSLC(1,    uint8_t  qmat_chroma[8*8];                         );
     GLSLC(0, };                                                    );
 
     return ff_vk_shader_add_push_const(shd, 0, sizeof(ProresVkParameters),

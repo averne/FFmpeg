@@ -86,10 +86,15 @@ void main(void)
 
     /* Coalesced load of DCT coeffs in shared memory, second part of inverse quantization */
     if (act) {
+        /**
+         * According to spec indexing an array in push constant memory with
+         * a non-dynamically uniform value is illegal ($15.9.1 in v1.4.326),
+         * so copy the whole matrix locally.
+         */
+        uint8_t[64] qmat = comp == 0 ? qmat_luma : qmat_chroma;
         [[unroll]] for (uint i = 0; i < 8; ++i) {
             int v = sign_extend(int(get_px(comp, ivec2(gid.x, (gid.y << 3) | i))), 16);
-            int w = comp == 0 ? qmat_luma[i][idx] : qmat_chroma[i][idx];
-            blocks[block][i * 9 + idx] = float(v * w);
+            blocks[block][i * 9 + idx] = float(v * int(qmat[(i << 3) + idx]));
         }
     }
 
