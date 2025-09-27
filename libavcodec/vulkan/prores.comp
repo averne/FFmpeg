@@ -45,8 +45,11 @@ shared float blocks[8*4*8*8];
     };
 #endif
 
+/* Encoded as ((kexp or kexp + 1) << 8) | (krice or kexp << 4) | (last_rice_q << 0) */
+const int first_dc_codebook = 0x650;
+
 /**
- * Table 9, encoded as (last_rice_q << 0) | (krice or kexp << 4) | ((kexp or kexp + 1) << 8)
+ * Table 9
  * According to the SMPTE document, abs(prev_dc_diff) should be used
  * to index the table, duplicating the entries removes the abs operation.
  */
@@ -95,7 +98,7 @@ void decode_comp(in GetBitContext gb, uvec3 wid, uint num_blocks)
     /* 7.1.1.3 DC Coefficients */
     {
         /* First coeff */
-        int c = to_signed(decode_codeword(gb, 0x650));
+        int c = to_signed(decode_codeword(gb, first_dc_codebook));
 
         blocks[0] = float(c);
 
@@ -193,44 +196,55 @@ void decode_alpha(in GetBitContext gb, uvec3 wid, uint num_blocks)
 
 /* 7.4 Inverse Transform */
 void idct(uint offset, uint stride) {
-    float c0 = blocks[0*stride + offset];
-    float c1 = blocks[1*stride + offset];
-    float c2 = blocks[2*stride + offset];
-    float c3 = blocks[3*stride + offset];
-    float c4 = blocks[4*stride + offset];
-    float c5 = blocks[5*stride + offset];
-    float c6 = blocks[6*stride + offset];
-    float c7 = blocks[7*stride + offset];
+    /* Adapted from faanidct.c */
+#define B0 1.0000000000000000000000f
+#define B1 1.3870398453221474618216f // cos(pi*1/16)sqrt(2)
+#define B2 1.3065629648763765278566f // cos(pi*2/16)sqrt(2)
+#define B3 1.1758756024193587169745f // cos(pi*3/16)sqrt(2)
+#define B4 1.0000000000000000000000f // cos(pi*4/16)sqrt(2)
+#define B5 0.7856949583871021812779f // cos(pi*5/16)sqrt(2)
+#define B6 0.5411961001461969843997f // cos(pi*6/16)sqrt(2)
+#define B7 0.2758993792829430123360f // cos(pi*7/16)sqrt(2)
 
-    float tmp1 = c6 * 1.4142134189605712891 + (c2 - c6);
-    float tmp2 = c6 * 1.4142134189605712891 - (c2 - c6);
+#define A4 0.7071067811865475244008f // cos(pi*4/16)
+#define A2 0.9238795325112867561281f // cos(pi*2/16)
 
-    float a1 = (c0 + c4) * 0.35355341434478759766 + tmp1 * 0.46193981170654296875;
-    float a4 = (c0 + c4) * 0.35355341434478759766 - tmp1 * 0.46193981170654296875;
+    float s17 = blocks[1*stride + offset] + blocks[7*stride + offset];
+    float d17 = blocks[1*stride + offset] - blocks[7*stride + offset];
+    float s53 = blocks[5*stride + offset] + blocks[3*stride + offset];
+    float d53 = blocks[5*stride + offset] - blocks[3*stride + offset];
 
-    float a3 = (c0 - c4) * 0.35355341434478759766 + tmp2 * 0.19134169816970825195;
-    float a2 = (c0 - c4) * 0.35355341434478759766 - tmp2 * 0.19134169816970825195;
+    float od07 =  s17 + s53;
+    float od25 = (s17 - s53) * (2*A4);
 
-    float tmp3 = (c3 - c5) * 0.70710682868957519531 + c7;
-    float tmp4 = (c3 - c5) * 0.70710682868957519531 - c7;
+    float od34 = d17 * (2*(B6-A2)) - d53 * (2*A2);
+    float od16 = d53 * (2*(A2-B2)) + d17 * (2*A2);
 
-    float tmp5 = (c5 - c7) *  1.4142134189605712891 + (c5 - c7) + (c1 - c3);
-    float tmp6 = (c5 - c7) * -1.4142134189605712891 + (c5 - c7) + (c1 - c3);
+    od16 -= od07;
+    od25 -= od16;
+    od34 += od25;
 
-    float m1 = tmp3 *  2.6131260395050048828 + tmp5;
-    float m4 = tmp3 * -2.6131260395050048828 + tmp5;
+    float s26 = blocks[2*stride + offset] + blocks[6*stride + offset];
+    float d26 = blocks[2*stride + offset] - blocks[6*stride + offset];
+    d26 *= 2*A4;
+    d26 -= s26;
 
-    float m2 = tmp4 *  1.0823919773101806641 + tmp6;
-    float m3 = tmp4 * -1.0823919773101806641 + tmp6;
+    float s04 = blocks[0*stride + offset] + blocks[4*stride + offset];
+    float d04 = blocks[0*stride + offset] - blocks[4*stride + offset];
 
-    blocks[0*stride + offset] = m1 *  0.49039259552955627441  + a1;
-    blocks[7*stride + offset] = m1 * -0.49039259552955627441  + a1;
-    blocks[1*stride + offset] = m2 *  0.41573479771614074707  + a2;
-    blocks[6*stride + offset] = m2 * -0.41573479771614074707  + a2;
-    blocks[2*stride + offset] = m3 *  0.27778509259223937988  + a3;
-    blocks[5*stride + offset] = m3 * -0.27778509259223937988  + a3;
-    blocks[3*stride + offset] = m4 *  0.097545139491558074951 + a4;
-    blocks[4*stride + offset] = m4 * -0.097545139491558074951 + a4;
+    float os07 = s04 + s26;
+    float os34 = s04 - s26;
+    float os16 = d04 + d26;
+    float os25 = d04 - d26;
+
+    blocks[0*stride + offset] = os07 + od07;
+    blocks[7*stride + offset] = os07 - od07;
+    blocks[1*stride + offset] = os16 + od16;
+    blocks[6*stride + offset] = os16 - od16;
+    blocks[2*stride + offset] = os25 + od25;
+    blocks[5*stride + offset] = os25 - od25;
+    blocks[3*stride + offset] = os34 - od34;
+    blocks[4*stride + offset] = os34 + od34;
 }
 
 void main(void)
@@ -331,15 +345,10 @@ void main(void)
     }
     barrier();
 
-    /**
-     * Inverse quantization
-     * According to the Vulkan spec indexing an array in push constant memory
-     * with a non-dynamically uniform value is illegal ($15.9.1 in v1.4.326),
-     * so copy the whole matrix locally.
-     */
-    uint8_t[64] qmat = luma ? qmat_luma : qmat_chroma;
+    /* Inverse quantization */
+    uint qmat_off = luma ? 0 : 64;
     for (uint i = lid.x; !alpha && i < (num_blocks<<6); i += wgs.x)
-        blocks[i] *= qmat[i & 63] * qscale;
+        blocks[i] *= scaled_qmat[qmat_off + (i & 63)] * qscale;
     barrier();
 
     /* Inverse transform, horizontal */

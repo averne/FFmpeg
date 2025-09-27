@@ -35,6 +35,7 @@ const FFVulkanDecodeDescriptor ff_vk_dec_prores_desc = {
 typedef struct ProresVulkanDecodePicture {
     FFVulkanDecodePicture vp;
 
+    AVBufferRef *scaled_qmat_buf;
     AVBufferRef *slice_offset_buf;
     uint32_t slice_num;
 
@@ -45,6 +46,7 @@ typedef struct ProresVulkanDecodePicture {
 typedef struct ProresVulkanDecodeContext {
     FFVulkanShader shd[2]; /* Progressive/interlaced */
 
+    AVBufferPool *scaled_qmat_pool;
     AVBufferPool *slice_offset_pool;
 } ProresVulkanDecodeContext;
 
@@ -63,10 +65,19 @@ typedef struct ProresVkParameters {
     uint8_t  depth;
     uint8_t  alpha_info;
     uint8_t  bottom_field;
-
-    uint8_t  qmat_luma  [64];
-    uint8_t  qmat_chroma[64];
 } ProresVkParameters;
+
+/* Taken from faanidct.c */
+static const float aan_prescale[] = {
+    1.0000000000000000000000,
+    1.3870398453221474618216,
+    1.3065629648763765278566,
+    1.1758756024193587169745,
+    1.0000000000000000000000,
+    0.7856949583871021812779,
+    0.5411961001461969843997,
+    0.2758993792829430123360,
+};
 
 static int vk_prores_start_frame(AVCodecContext          *avctx,
                                  const AVBufferRef       *buffer_ref,
@@ -80,7 +91,9 @@ static int vk_prores_start_frame(AVCodecContext          *avctx,
     ProresVulkanDecodePicture *pp = pr->hwaccel_picture_private;
     FFVulkanDecodePicture     *vp = &pp->vp;
 
-    int err;
+    FFVkBuffer *scaled_qmat_buf;
+    float *scaled_qmat, fact;
+    int i, err;
 
     /* Host map the input slices data if supported */
     if (!vp->slices_buf && ctx->s.extensions & FF_VK_EXT_EXTERNAL_HOST_MEMORY)
@@ -98,12 +111,30 @@ static int vk_prores_start_frame(AVCodecContext          *avctx,
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT));
 
+    /* Allocate quantization matrix buffer */
+    RET(ff_vk_get_pooled_buffer(&ctx->s, &pv->scaled_qmat_pool,
+                                &pp->scaled_qmat_buf,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                                NULL, 64 * 2 * sizeof(float),
+                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT));
+
     /* Prepare frame to be used */
     RET(ff_vk_decode_prepare_frame_sdr(dec, pr->frame, vp, 1,
                                        FF_VK_REP_NATIVE, 0));
 
     pp->slice_num = 0;
     pp->bitstream_start = pp->bitstream_size = 0;
+
+    scaled_qmat_buf = (FFVkBuffer *)pp->scaled_qmat_buf->data;
+    scaled_qmat     = (float *)scaled_qmat_buf->mapped_mem;
+
+    for (i = 0; i < 64; ++i) {
+        fact = aan_prescale[i >> 3] * aan_prescale[i & 7] / 8.0f;
+        scaled_qmat[i +  0] = (float)pr->qmat_luma  [i] * fact;
+        scaled_qmat[i + 64] = (float)pr->qmat_chroma[i] * fact;
+    }
 
 fail:
     return err;
@@ -153,7 +184,7 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
 
     ProresVkParameters pd;
     FFVulkanShader *shd;
-    FFVkBuffer *slice_data, *slice_offsets;
+    FFVkBuffer *slice_data, *scaled_qmat, *slice_offsets;
     VkImageMemoryBarrier2 img_bar[AV_NUM_DATA_POINTERS];
     VkBufferMemoryBarrier2 buf_bar[2];
     int nb_img_bar = 0, nb_buf_bar = 0, err;
@@ -167,6 +198,7 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
         return AVERROR(EINVAL);
 
     slice_data    = (FFVkBuffer *)vp->slices_buf->data;
+    scaled_qmat   = (FFVkBuffer *)pp->scaled_qmat_buf->data;
     slice_offsets = (FFVkBuffer *)pp->slice_offset_buf->data;
 
     shd = &pv->shd[pr->frame_type != 0];
@@ -188,9 +220,6 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
         .bottom_field     = pr->first_field ^ (pr->frame_type == 1),
     };
 
-    memcpy(pd.qmat_luma,   pr->qmat_luma,   sizeof(pd.qmat_luma  ));
-    memcpy(pd.qmat_chroma, pr->qmat_chroma, sizeof(pd.qmat_chroma));
-
     FFVkExecContext *exec = ff_vk_exec_get(&ctx->s, &ctx->exec_pool);
     RET(ff_vk_exec_start(&ctx->s, exec));
 
@@ -203,11 +232,11 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
                                     pr->frame));
 
     RET(ff_vk_exec_add_dep_buf(&ctx->s, exec,
-                               (AVBufferRef *[]){ vp->slices_buf, pp->slice_offset_buf },
-                               2, 0));
+                               (AVBufferRef *[]){ vp->slices_buf, pp->scaled_qmat_buf, pp->slice_offset_buf },
+                               3, 0));
 
     /* Transfer ownership to the exec context */
-    vp->slices_buf = pp->slice_offset_buf = NULL;
+    vp->slices_buf = pp->scaled_qmat_buf = pp->slice_offset_buf = NULL;
 
     /* Input frame barrier */
     ff_vk_frame_barrier(&ctx->s, exec, pr->frame, img_bar, &nb_img_bar,
@@ -232,9 +261,14 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
                                     slice_offsets,
                                     0, (pp->slice_num + 1) * sizeof(uint32_t),
                                     VK_FORMAT_UNDEFINED);
+    ff_vk_shader_update_desc_buffer(&ctx->s, exec, shd,
+                                    0, 1, 0,
+                                    scaled_qmat,
+                                    0, 64 * 2 * sizeof(float),
+                                    VK_FORMAT_UNDEFINED);
     ff_vk_shader_update_img_array(&ctx->s, exec, shd,
                                   pr->frame, vp->view.out,
-                                  0, 1,
+                                  0, 2,
                                   VK_IMAGE_LAYOUT_GENERAL,
                                   VK_NULL_HANDLE);
 
@@ -270,9 +304,6 @@ static int add_push_data(FFVulkanShader *shd)
     GLSLC(1,    uint8_t  depth;                                    );
     GLSLC(1,    uint8_t  alpha_info;                               );
     GLSLC(1,    uint8_t  bottom_field;                             );
-    GLSLC(0,                                                       );
-    GLSLC(1,    uint8_t  qmat_luma  [8*8];                         );
-    GLSLC(1,    uint8_t  qmat_chroma[8*8];                         );
     GLSLC(0, };                                                    );
 
     return ff_vk_shader_add_push_const(shd, 0, sizeof(ProresVkParameters),
@@ -384,6 +415,14 @@ static int vk_decode_prores_init(AVCodecContext *avctx)
                 .buf_elems   = max_num_slices + 1,
             },
             {
+                .name        = "scaled_qmat_buf",
+                .type        = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .stages      = VK_SHADER_STAGE_COMPUTE_BIT,
+                .mem_quali   = "readonly",
+                .buf_content = "float scaled_qmat",
+                .buf_elems   = 64*2,
+            },
+            {
                 .name       = "dst",
                 .type       = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                 .dimensions = 2,
@@ -395,7 +434,7 @@ static int vk_decode_prores_init(AVCodecContext *avctx)
             },
         };
         RET(init_shader(avctx, &ctx->s, &ctx->exec_pool, spv, &pv->shd[i],
-                        "prores_dec", "main", desc_set, 2,
+                        "prores_dec", "main", desc_set, 3,
                         ff_source_prores_comp, wg_dims, i));
     }
 
