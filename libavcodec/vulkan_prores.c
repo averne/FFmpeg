@@ -21,7 +21,6 @@
 #include "hwaccel_internal.h"
 #include "libavutil/mem.h"
 #include "libavutil/vulkan.h"
-#include "libavutil/vulkan_loader.h"
 #include "libavutil/vulkan_spirv.h"
 
 extern const char *ff_source_common_comp;
@@ -207,13 +206,11 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     RET(ff_vk_exec_mirror_sem_value(&ctx->s, exec, &vp->sem, &vp->sem_value,
                                     pr->frame));
 
+    /* Transfer ownership to the exec context */
     RET(ff_vk_exec_add_dep_buf(&ctx->s, exec, &vp->slices_buf, 1, 0));
     vp->slices_buf = NULL;
     RET(ff_vk_exec_add_dep_buf(&ctx->s, exec, &pp->metadata_buf, 1, 0));
     pp->metadata_buf = NULL;
-
-    /* Transfer ownership to the exec context */
-    vp->slices_buf = pp->metadata_buf = NULL;
 
     /* Input barrier */
     ff_vk_frame_barrier(&ctx->s, exec, pr->frame, img_bar, &nb_img_bar,
@@ -390,7 +387,7 @@ static int init_shader(AVCodecContext *avctx, FFVulkanContext *s,
                        FFVkExecPool *pool, FFVkSPIRVCompiler *spv,
                        FFVulkanShader *shd, const char *name, const char *entrypoint,
                        FFVulkanDescriptorSetBinding *descs, int num_descs,
-                       const char *source, int local_size, int interlaced)
+                       const char *source, int local_size, int interlaced, int gb_smem)
 {
     uint8_t *spv_data;
     size_t spv_len;
@@ -404,6 +401,12 @@ static int init_shader(AVCodecContext *avctx, FFVulkanContext *s,
                           local_size >> 16 & 0xff, local_size >> 8 & 0xff, local_size >> 0 & 0xff,
                           0));
 
+    if (gb_smem)
+        av_bprintf(&shd->src, "#define GET_BITS_SMEM\n");
+
+    if (interlaced)
+        av_bprintf(&shd->src, "#define INTERLACED\n");
+
     /* Common code */
     GLSLD(ff_source_common_comp);
 
@@ -411,9 +414,6 @@ static int init_shader(AVCodecContext *avctx, FFVulkanContext *s,
     RET(add_push_data(shd));
 
     RET(ff_vk_shader_add_descriptor_set(s, shd, descs, num_descs, 0, 0));
-
-    if (interlaced)
-        av_bprintf(&shd->src, "#define INTERLACED\n");
 
     /* Main code */
     GLSLD(source);
@@ -493,7 +493,8 @@ static int vk_decode_prores_init(AVCodecContext *avctx)
     };
     RET(init_shader(avctx, &ctx->s, &ctx->exec_pool, spv, &pv->reset,
                     "prores_dec_reset", "main", desc_set, 1,
-                    ff_source_prores_reset_comp, 0x080801, pr->frame_type != 0));
+                    ff_source_prores_reset_comp, 0x080801, pr->frame_type != 0, 0));
+
     desc_set = (FFVulkanDescriptorSetBinding []) {
         {
             .name        = "slice_offsets_buf",
@@ -524,7 +525,8 @@ static int vk_decode_prores_init(AVCodecContext *avctx)
     };
     RET(init_shader(avctx, &ctx->s, &ctx->exec_pool, spv, &pv->vld,
                     "prores_dec_vld", "main", desc_set, 3,
-                    ff_source_prores_vld_comp, 0x080801, pr->frame_type != 0));
+                    ff_source_prores_vld_comp, 0x080801, pr->frame_type != 0,
+                    ctx->s.props.properties.limits.maxComputeSharedMemorySize >= 64*16));
 
     desc_set = (FFVulkanDescriptorSetBinding []) {
         {
@@ -547,7 +549,7 @@ static int vk_decode_prores_init(AVCodecContext *avctx)
     };
     RET(init_shader(avctx, &ctx->s, &ctx->exec_pool, spv, &pv->idct,
                     "prores_dec_idct", "main", desc_set, 2,
-                    ff_source_prores_idct_comp, 0x200201, pr->frame_type != 0));
+                    ff_source_prores_idct_comp, 0x200201, pr->frame_type != 0, 0));
 
     err = 0;
 
