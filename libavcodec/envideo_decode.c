@@ -83,7 +83,7 @@ int ff_envideo_decode_init(AVCodecContext *avctx, FFEnvideoDecodeContext *ctx) {
     device_ctx = frames_ctx->device_ctx->hwctx;
 
     dev_info = envideo_device_get_info(device_ctx->device);
-    s->is_tegra = dev_info.is_tegra;
+    s->is_tegra = dev_info.tegra_layout;
 
     s->hw_device_ref = av_buffer_ref(frames_ctx->device_ref);
     if (!s->hw_device_ref) {
