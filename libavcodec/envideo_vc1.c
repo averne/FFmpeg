@@ -215,7 +215,7 @@ static void envideo_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
 
         .HistBufferSize          = ctx->shared->history_size / 256,
 
-        .loopfilter              = s->loop_filter,
+        .loopfilter              = v->loop_filter,
 
         .output_memory_layout    = 0, /* NV12 */
         .ref_memory_layout       = {
@@ -246,7 +246,7 @@ static void envideo_vc1_prepare_frame_setup(nvdec_vc1_pic_s *setup, AVCodecConte
         .multires                = v->multires,
         .syncmarker              = v->resync_marker,
         .rangered                = v->rangered,
-        .maxbframes              = s->max_b_frames,
+        .maxbframes              = v->max_b_frames,
         .panscan_flag            = v->panscanflag,
         .dquant                  = v->dquant,
         .refdist_flag            = v->refdist_flag,
@@ -333,7 +333,9 @@ static int envideo_vc1_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VC1Context *v, Envi
     return 0;
 }
 
-static int envideo_vc1_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+static int envideo_vc1_start_frame(AVCodecContext *avctx, const AVBufferRef *buf_ref,
+                                   const uint8_t *buf, uint32_t buf_size)
+{
     VC1Context                *v = avctx->priv_data;
     MpegEncContext            *s = &v->s;
     AVFrame               *frame = s->cur_pic.ptr->f;
@@ -369,7 +371,7 @@ static int envideo_vc1_end_frame(AVCodecContext *avctx) {
     VC1Context                *v = avctx->priv_data;
     EnvideoVC1DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = v->s.cur_pic.ptr->f;
-    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref;
     FFEnvideoDecodeField  *field = ff_envideo_get_priv(frame, SECOND_FIELD(v));
 
     AVEnvideoJob *job;

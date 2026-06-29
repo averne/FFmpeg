@@ -528,9 +528,9 @@ static const AVFilterPad envideo_spatialfilter_outputs[] = {
 };
 
 #if CONFIG_SHARPNESS_ENVIDEO_FILTER
-const AVFilter ff_vf_sharpness_envideo = {
-    .name            = "sharpness_envideo",
-    .description     = NULL_IF_CONFIG_SMALL("Envideo accelerated sharpening"),
+const FFFilter ff_vf_sharpness_envideo = {
+    .p.name          = "sharpness_envideo",
+    .p.description   = NULL_IF_CONFIG_SMALL("Envideo accelerated sharpening"),
     .priv_size       = sizeof(EnvideoSpatialFilterContext),
     .init            = &ff_envideo_vpp_ctx_init,
     .uninit          = &envideo_spatialfilter_uninit,
@@ -538,15 +538,15 @@ const AVFilter ff_vf_sharpness_envideo = {
     FILTER_INPUTS(envideo_spatialfilter_inputs),
     FILTER_OUTPUTS(envideo_spatialfilter_outputs),
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_ENVIDEO),
-    .priv_class      = &envideo_sharpness_class,
+    .p.priv_class    = &envideo_sharpness_class,
     .flags_internal  = FF_FILTER_FLAG_HWFRAME_AWARE,
 };
 #endif
 
 #if CONFIG_DENOISE_ENVIDEO_FILTER
-const AVFilter ff_vf_denoise_envideo = {
-    .name            = "denoise_envideo",
-    .description     = NULL_IF_CONFIG_SMALL("Envideo accelerated denoising"),
+const FFFilter ff_vf_denoise_envideo = {
+    .p.name          = "denoise_envideo",
+    .p.description   = NULL_IF_CONFIG_SMALL("Envideo accelerated denoising"),
     .priv_size       = sizeof(EnvideoSpatialFilterContext),
     .init            = &ff_envideo_vpp_ctx_init,
     .uninit          = &envideo_spatialfilter_uninit,
@@ -554,7 +554,7 @@ const AVFilter ff_vf_denoise_envideo = {
     FILTER_INPUTS(envideo_spatialfilter_inputs),
     FILTER_OUTPUTS(envideo_spatialfilter_outputs),
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_ENVIDEO),
-    .priv_class      = &envideo_denoise_class,
+    .p.priv_class    = &envideo_denoise_class,
     .flags_internal  = FF_FILTER_FLAG_HWFRAME_AWARE,
 };
 #endif

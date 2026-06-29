@@ -272,7 +272,9 @@ static int envideo_vp8_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, VP8Context *h,
     return 0;
 }
 
-static int envideo_vp8_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+static int envideo_vp8_start_frame(AVCodecContext *avctx, const AVBufferRef *buf_ref,
+                                   const uint8_t *buf, uint32_t buf_size)
+{
     VP8Context                *h = avctx->priv_data;
     AVFrame               *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
     EnvideoVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
@@ -307,7 +309,7 @@ static int envideo_vp8_end_frame(AVCodecContext *avctx) {
     VP8Context                *h = avctx->priv_data;
     EnvideoVP8DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame               *frame = h->framep[VP8_FRAME_CURRENT]->tf.f;
-    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData         *fdd = (FrameDecodeData *)frame->private_ref;
     FFEnvideoDecodeField  *field = ff_envideo_get_priv(frame, false);
 
     AVEnvideoJob *job;

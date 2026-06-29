@@ -151,7 +151,7 @@ static void envideo_fdd_priv_free(void *priv) {
 }
 
 int ff_envideo_wait_decode(void *logctx, AVFrame *frame) {
-    FrameDecodeData               *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData               *fdd = (FrameDecodeData *)frame->private_ref;
     FFEnvideoDecodeFrame           *tf = fdd->hwaccel_priv;
     FFEnvideoDecodeContext        *ctx = tf->ctx;
     AVHWDeviceContext   *hw_device_ctx = (AVHWDeviceContext *)ctx->shared->hw_device_ref->data;
@@ -180,7 +180,7 @@ int ff_envideo_start_frame(AVCodecContext *avctx, AVFrame *frame, bool second_fi
                            FFEnvideoDecodeContext *ctx)
 {
     AVHWFramesContext      *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
-    FrameDecodeData               *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData               *fdd = (FrameDecodeData *)frame->private_ref;
     AVHWDeviceContext   *hw_device_ctx = (AVHWDeviceContext *)ctx->shared->hw_device_ref->data;
     AVEnvideoDeviceContext *device_ctx = hw_device_ctx->hwctx;
     FFEnvideoDecodeContextShared   *sc = ctx->shared;

@@ -113,7 +113,7 @@ static inline AVFrame *ff_envideo_safe_get_ref(AVFrame *ref, AVFrame *fallback) 
 }
 
 static inline FFEnvideoDecodeField *ff_envideo_get_priv(AVFrame *frame, bool second_field) {
-    FrameDecodeData *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData *fdd = (FrameDecodeData *)frame->private_ref;
     return fdd ? &((FFEnvideoDecodeFrame *)fdd->hwaccel_priv)->fields[second_field] : NULL;
 }
 

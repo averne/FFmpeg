@@ -224,7 +224,9 @@ static int envideo_mpeg12_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MpegEncContext *
     return 0;
 }
 
-static int envideo_mpeg12_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+static int envideo_mpeg12_start_frame(AVCodecContext *avctx, const AVBufferRef *buf_ref,
+                                      const uint8_t *buf, uint32_t buf_size)
+{
     MpegEncContext               *s = avctx->priv_data;
     AVFrame                  *frame = s->cur_pic.ptr->f;
     EnvideoMPEG12DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
@@ -257,7 +259,7 @@ static int envideo_mpeg12_end_frame(AVCodecContext *avctx) {
     MpegEncContext               *s = avctx->priv_data;
     EnvideoMPEG12DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                  *frame = s->cur_pic.ptr->f;
-    FrameDecodeData            *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData            *fdd = (FrameDecodeData *)frame->private_ref;
     FFEnvideoDecodeField     *field = ff_envideo_get_priv(frame, SECOND_FIELD(s));
 
     AVEnvideoJob *job;

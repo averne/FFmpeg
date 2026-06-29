@@ -163,7 +163,7 @@ static void envideo_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecC
                                               EnvideoMPEG4DecodeContext *ctx)
 {
     Mpeg4DecContext      *m = avctx->priv_data;
-    MpegEncContext       *s = &m->m;
+    MpegEncContext       *s = &m->h.c;
     AVFrame          *frame = s->cur_pic.ptr->f;
     AVEnvideoFrame *evframe = (AVEnvideoFrame *)frame->buf[0]->data;
 
@@ -203,11 +203,11 @@ static void envideo_mpeg4_prepare_frame_setup(nvdec_mpeg4_pic_s *setup, AVCodecC
         .trd                          = { s->pp_time, s->pp_field_time >> 1 },
         .trb                          = { s->pb_time, s->pb_field_time >> 1 },
 
-        .vop_fcode_forward            = s->f_code,
-        .vop_fcode_backward           = s->b_code,
+        .vop_fcode_forward            = m->f_code,
+        .vop_fcode_backward           = m->b_code,
 
         .interlaced                   = s->interlaced_dct,
-        .quant_type                   = s->mpeg_quant,
+        .quant_type                   = m->mpeg_quant,
         .quarter_sample               = s->quarter_sample,
         .short_video_header           = avctx->codec->id == AV_CODEC_ID_H263,
 
@@ -279,9 +279,11 @@ static int envideo_mpeg4_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MpegEncContext *s
     return 0;
 }
 
-static int envideo_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+static int envideo_mpeg4_start_frame(AVCodecContext *avctx, const AVBufferRef *buf_ref,
+                                     const uint8_t *buf, uint32_t buf_size)
+{
     Mpeg4DecContext             *m = avctx->priv_data;
-    MpegEncContext              *s = &m->m;
+    MpegEncContext              *s = &m->h.c;
     AVFrame                 *frame = s->cur_pic.ptr->f;
     EnvideoMPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
 
@@ -311,10 +313,10 @@ static int envideo_mpeg4_start_frame(AVCodecContext *avctx, const uint8_t *buf, 
 
 static int envideo_mpeg4_end_frame(AVCodecContext *avctx) {
     Mpeg4DecContext             *m = avctx->priv_data;
-    MpegEncContext              *s = &m->m;
+    MpegEncContext              *s = &m->h.c;
     EnvideoMPEG4DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                 *frame = s->cur_pic.ptr->f;
-    FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData           *fdd = (FrameDecodeData *)frame->private_ref;
     FFEnvideoDecodeField    *field = ff_envideo_get_priv(frame, SECOND_FIELD(s));
 
     AVEnvideoJob *job;
@@ -349,16 +351,16 @@ static int envideo_mpeg4_end_frame(AVCodecContext *avctx) {
 
 static int envideo_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
     Mpeg4DecContext *m = avctx->priv_data;
-    MpegEncContext  *s = &m->m;
-    AVFrame     *frame = m->m.cur_pic.ptr->f;
+    MpegEncContext  *s = &m->h.c;
+    AVFrame     *frame = s->cur_pic.ptr->f;
 
     /**
      * Look for the vop startmarker within the bitstream.
      * This data was discarded after the slice header parsing,
      * so we must start from the beginning of the packet.
      */
-    buf      = s->gb.buffer;
-    buf_size = s->gb.buffer_end - s->gb.buffer;
+    buf      = m->h.gb.buffer;
+    buf_size = get_bits_bytesize(&m->h.gb, 0);
     while (*(uint32_t *)buf != AV_BE2NE32C(VOP_STARTCODE))
         buf += 1, buf_size -= 1;
 

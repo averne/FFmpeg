@@ -266,9 +266,9 @@ static const AVFilterPad envideo_deinterlace_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_deinterlace_envideo = {
-    .name            = "deinterlace_envideo",
-    .description     = NULL_IF_CONFIG_SMALL("Envideo accelerated deinterlacing"),
+const FFFilter ff_vf_deinterlace_envideo = {
+    .p.name          = "deinterlace_envideo",
+    .p.description   = NULL_IF_CONFIG_SMALL("Envideo accelerated deinterlacing"),
     .priv_size       = sizeof(EnvideoDeinterlaceContext),
     .init            = &ff_envideo_vpp_ctx_init,
     .uninit          = &ff_envideo_vpp_ctx_uninit,
@@ -276,6 +276,6 @@ const AVFilter ff_vf_deinterlace_envideo = {
     FILTER_INPUTS(envideo_deinterlace_inputs),
     FILTER_OUTPUTS(envideo_deinterlace_outputs),
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_ENVIDEO),
-    .priv_class      = &envideo_deinterlace_class,
+    .p.priv_class    = &envideo_deinterlace_class,
     .flags_internal  = FF_FILTER_FLAG_HWFRAME_AWARE,
 };

@@ -437,7 +437,9 @@ static int envideo_h264_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, H264Context *h,
     return 0;
 }
 
-static int envideo_h264_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+static int envideo_h264_start_frame(AVCodecContext *avctx, const AVBufferRef *buf_ref,
+                                    const uint8_t *buf, uint32_t buf_size)
+{
     H264Context                *h = avctx->priv_data;
     AVFrame                *frame = h->cur_pic_ptr->f;
     EnvideoH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
@@ -470,7 +472,7 @@ static int envideo_h264_end_frame(AVCodecContext *avctx) {
     H264Context                *h = avctx->priv_data;
     EnvideoH264DecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     AVFrame                *frame = h->cur_pic_ptr->f;
-    FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData          *fdd = (FrameDecodeData *)frame->private_ref;
     FFEnvideoDecodeField   *field = ff_envideo_get_priv(frame, SECOND_FIELD(h));
 
     AVEnvideoJob *job;

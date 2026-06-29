@@ -251,7 +251,9 @@ static int envideo_mjpeg_prepare_cmdbuf(EnvideoCmdbuf *cmdbuf, MJpegDecodeContex
     return 0;
 }
 
-static int envideo_mjpeg_start_frame(AVCodecContext *avctx, const uint8_t *buf, uint32_t buf_size) {
+static int envideo_mjpeg_start_frame(AVCodecContext *avctx, const AVBufferRef *buf_ref,
+                                     const uint8_t *buf, uint32_t buf_size)
+{
     MJpegDecodeContext          *s = avctx->priv_data;
     AVFrame                 *frame = s->picture;
     EnvideoMJPEGDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
@@ -274,7 +276,7 @@ static int envideo_mjpeg_end_frame(AVCodecContext *avctx) {
     FFEnvideoDecodeContextShared *sc = ctx->core.shared;
     AVFrame                   *frame = s->picture;
     AVEnvideoFrame          *enframe = (AVEnvideoFrame *)frame->buf[0]->data;
-    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref->data;
+    FrameDecodeData             *fdd = (FrameDecodeData *)frame->private_ref;
     FFEnvideoDecodeField      *field = ff_envideo_get_priv(frame, false);
 
     AVEnvideoJob *job;
