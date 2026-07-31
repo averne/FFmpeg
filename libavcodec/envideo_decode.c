@@ -389,18 +389,18 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, bool second_fiel
 
     op = &ctx->operations[i];
 
-    err = envideo_channel_submit(sc->channel, job->cmdbuf, &op->fence);
+    err = envideo_channel_submit(sc->channel, job->cmdbuf, &field->operation.fence);
     if (err < 0)
         return err;
 
     field->in_flight = true;
 
-    err = av_buffer_replace(&op->job_ref, op->job_ref);
+    err = av_buffer_replace(&op->job_ref, field->operation.job_ref);
     if (err < 0)
         return err;
 
-    op->fence         = op->fence;
-    op->bitstream_len = op->bitstream_len;
+    op->fence         = field->operation.fence;
+    op->bitstream_len = field->operation.bitstream_len;
     evframe->fence    = op->fence;
 
     ctx->frame_idx++;
