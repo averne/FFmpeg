@@ -226,7 +226,7 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
 
     H264Picture *refs[16+1] = {0};
     EnvideoH264FrameData *fr_priv;
-    int num_refs, max, i, diff;
+    int num_refs, max, i, diff, delta;
 
     *setup = (nvdec_h264_pic_s){
         .mbhist_buffer_size                     = ctx->shared->mbhist_size,
@@ -363,8 +363,9 @@ static void envideo_h264_prepare_frame_setup(nvdec_h264_pic_s *setup, H264Contex
         if (!(ctx->dpb_mask & (1 << i)))
             continue;
 
-        if (FFABS(h->cur_pic_ptr->frame_num - ctx->dpb[i]->frame_num) < diff)
-            ctx->scratch_ref = ctx->dpb[i];
+        delta = FFABS(h->cur_pic_ptr->frame_num - ctx->dpb[i]->frame_num);
+        if (delta < diff)
+            diff = delta, ctx->scratch_ref = ctx->dpb[i];
     }
 }
 
