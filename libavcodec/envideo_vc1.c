@@ -435,50 +435,36 @@ static int envideo_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buf, u
     return ff_envideo_decode_slice(avctx, frame, SECOND_FIELD(v), buf, buf_size, false);
 }
 
-static int envideo_vc1_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
-    EnvideoVC1DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
-    EnvideoVC1DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
-
-    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
-    dst_ctx->is_first_slice = src_ctx->is_first_slice;
-    dst_ctx->prev_frame     = src_ctx->prev_frame;
-    dst_ctx->next_frame     = src_ctx->next_frame;
-
-    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
-}
-
 #if CONFIG_VC1_ENVIDEO_HWACCEL
 const FFHWAccel ff_vc1_envideo_hwaccel = {
-    .p.name                = "vc1_envideo",
-    .p.type                = AVMEDIA_TYPE_VIDEO,
-    .p.id                  = AV_CODEC_ID_VC1,
-    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
-    .start_frame           = &envideo_vc1_start_frame,
-    .end_frame             = &envideo_vc1_end_frame,
-    .decode_slice          = &envideo_vc1_decode_slice,
-    .init                  = &envideo_vc1_decode_init,
-    .uninit                = &envideo_vc1_decode_uninit,
-    .frame_params          = &ff_envideo_frame_params,
-    .update_thread_context = &envideo_vc1_update_thread_context,
-    .priv_data_size        = sizeof(EnvideoVC1DecodeContext),
-    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
+    .p.name         = "vc1_envideo",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_VC1,
+    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
+    .start_frame    = &envideo_vc1_start_frame,
+    .end_frame      = &envideo_vc1_end_frame,
+    .decode_slice   = &envideo_vc1_decode_slice,
+    .init           = &envideo_vc1_decode_init,
+    .uninit         = &envideo_vc1_decode_uninit,
+    .frame_params   = &ff_envideo_frame_params,
+    .priv_data_size = sizeof(EnvideoVC1DecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif
 
 #if CONFIG_WMV3_ENVIDEO_HWACCEL
 const FFHWAccel ff_wmv3_envideo_hwaccel = {
-    .p.name                = "wmv3_envideo",
-    .p.type                = AVMEDIA_TYPE_VIDEO,
-    .p.id                  = AV_CODEC_ID_WMV3,
-    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
-    .start_frame           = &envideo_vc1_start_frame,
-    .end_frame             = &envideo_vc1_end_frame,
-    .decode_slice          = &envideo_vc1_decode_slice,
-    .init                  = &envideo_vc1_decode_init,
-    .uninit                = &envideo_vc1_decode_uninit,
-    .frame_params          = &ff_envideo_frame_params,
-    .update_thread_context = &envideo_vc1_update_thread_context,
-    .priv_data_size        = sizeof(EnvideoVC1DecodeContext),
-    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
+    .p.name         = "wmv3_envideo",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_WMV3,
+    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
+    .start_frame    = &envideo_vc1_start_frame,
+    .end_frame      = &envideo_vc1_end_frame,
+    .decode_slice   = &envideo_vc1_decode_slice,
+    .init           = &envideo_vc1_decode_init,
+    .uninit         = &envideo_vc1_decode_uninit,
+    .frame_params   = &ff_envideo_frame_params,
+    .priv_data_size = sizeof(EnvideoVC1DecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

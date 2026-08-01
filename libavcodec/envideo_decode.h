@@ -127,7 +127,6 @@ int ff_envideo_decode_slice(AVCodecContext *avctx, AVFrame *frame, bool second_f
                             const uint8_t *buf, uint32_t buf_size, bool add_startcode);
 int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, bool second_field,
                          FFEnvideoDecodeContext *ctx, const uint8_t *end_sequence, int end_sequence_size);
-int ff_envideo_update_thread_context(FFEnvideoDecodeContext *dst, const FFEnvideoDecodeContext *src);
 
 int ff_envideo_wait_decode(void *logctx, AVFrame *frame);
 

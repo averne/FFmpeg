@@ -740,19 +740,6 @@ static int envideo_hevc_decode_slice(AVCodecContext *avctx, const uint8_t *buf, 
     return ff_envideo_decode_slice(avctx, frame, false, buf, buf_size, AV_RB24(buf) != 1);
 }
 
-static int envideo_hevc_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
-    EnvideoHEVCDecodeContext *src_ctx = src->internal->hwaccel_priv_data;
-    EnvideoHEVCDecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
-
-    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
-    memcpy(dst_ctx->refs, src_ctx->refs, sizeof(dst_ctx->refs));
-    dst_ctx->scratch_ref = src_ctx->scratch_ref;
-    dst_ctx->refs_mask   = src_ctx->refs_mask;
-    dst_ctx->pattern_id  = src_ctx->pattern_id;
-
-    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
-}
-
 #if CONFIG_HEVC_ENVIDEO_HWACCEL
 const FFHWAccel ff_hevc_envideo_hwaccel = {
     .p.name                = "hevc_envideo",
@@ -765,9 +752,8 @@ const FFHWAccel ff_hevc_envideo_hwaccel = {
     .init                  = &envideo_hevc_decode_init,
     .uninit                = &envideo_hevc_decode_uninit,
     .frame_params          = &ff_envideo_frame_params,
-    .update_thread_context = &envideo_hevc_update_thread_context,
     .frame_priv_data_size  = sizeof(EnvideoHEVCFrameData),
     .priv_data_size        = sizeof(EnvideoHEVCDecodeContext),
-    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
+    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

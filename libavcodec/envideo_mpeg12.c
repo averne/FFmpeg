@@ -299,45 +299,36 @@ static int envideo_mpeg12_decode_slice(AVCodecContext *avctx, const uint8_t *buf
     return ff_envideo_decode_slice(avctx, frame, false, buf, buf_size, false);
 }
 
-static int envideo_mpeg12_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
-    EnvideoMPEG12DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
-    EnvideoMPEG12DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
-
-    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
-}
-
 #if CONFIG_MPEG1_ENVIDEO_HWACCEL
 const FFHWAccel ff_mpeg1_envideo_hwaccel = {
-    .p.name                = "mpeg1_envideo",
-    .p.type                = AVMEDIA_TYPE_VIDEO,
-    .p.id                  = AV_CODEC_ID_MPEG1VIDEO,
-    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
-    .start_frame           = &envideo_mpeg12_start_frame,
-    .end_frame             = &envideo_mpeg12_end_frame,
-    .decode_slice          = &envideo_mpeg12_decode_slice,
-    .init                  = &envideo_mpeg12_decode_init,
-    .uninit                = &envideo_mpeg12_decode_uninit,
-    .frame_params          = &ff_envideo_frame_params,
-    .update_thread_context = &envideo_mpeg12_update_thread_context,
-    .priv_data_size        = sizeof(EnvideoMPEG12DecodeContext),
-    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
+    .p.name         = "mpeg1_envideo",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_MPEG1VIDEO,
+    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
+    .start_frame    = &envideo_mpeg12_start_frame,
+    .end_frame      = &envideo_mpeg12_end_frame,
+    .decode_slice   = &envideo_mpeg12_decode_slice,
+    .init           = &envideo_mpeg12_decode_init,
+    .uninit         = &envideo_mpeg12_decode_uninit,
+    .frame_params   = &ff_envideo_frame_params,
+    .priv_data_size = sizeof(EnvideoMPEG12DecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif
 
 #if CONFIG_MPEG2_ENVIDEO_HWACCEL
 const FFHWAccel ff_mpeg2_envideo_hwaccel = {
-    .p.name                = "mpeg2_envideo",
-    .p.type                = AVMEDIA_TYPE_VIDEO,
-    .p.id                  = AV_CODEC_ID_MPEG2VIDEO,
-    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
-    .start_frame           = &envideo_mpeg12_start_frame,
-    .end_frame             = &envideo_mpeg12_end_frame,
-    .decode_slice          = &envideo_mpeg12_decode_slice,
-    .init                  = &envideo_mpeg12_decode_init,
-    .uninit                = &envideo_mpeg12_decode_uninit,
-    .frame_params          = &ff_envideo_frame_params,
-    .update_thread_context = &envideo_mpeg12_update_thread_context,
-    .priv_data_size        = sizeof(EnvideoMPEG12DecodeContext),
-    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
+    .p.name         = "mpeg2_envideo",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_MPEG2VIDEO,
+    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
+    .start_frame    = &envideo_mpeg12_start_frame,
+    .end_frame      = &envideo_mpeg12_end_frame,
+    .decode_slice   = &envideo_mpeg12_decode_slice,
+    .init           = &envideo_mpeg12_decode_init,
+    .uninit         = &envideo_mpeg12_decode_uninit,
+    .frame_params   = &ff_envideo_frame_params,
+    .priv_data_size = sizeof(EnvideoMPEG12DecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

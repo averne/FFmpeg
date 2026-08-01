@@ -408,15 +408,6 @@ int ff_envideo_end_frame(AVCodecContext *avctx, AVFrame *frame, bool second_fiel
     return 0;
 }
 
-int ff_envideo_update_thread_context(FFEnvideoDecodeContext *dst, const FFEnvideoDecodeContext *src) {
-    av_refstruct_replace(&dst->shared, src->shared);
-    dst->frame_idx          = src->frame_idx;
-    dst->input_map_size     = src->input_map_size;
-    dst->max_bitstream_size = src->max_bitstream_size;
-
-    return 0;
-}
-
 int ff_envideo_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx) {
     AVHWFramesContext      *frames_ctx = (AVHWFramesContext *)hw_frames_ctx->data;
     AVEnvideoDeviceContext *device_ctx = frames_ctx->device_ctx->hwctx;

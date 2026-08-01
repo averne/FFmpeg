@@ -358,27 +358,19 @@ static int envideo_mjpeg_frame_params(AVCodecContext *avctx, AVBufferRef *hw_fra
     return 0;
 }
 
-static int envideo_mjpeg_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
-    EnvideoMJPEGDecodeContext *src_ctx = src->internal->hwaccel_priv_data;
-    EnvideoMJPEGDecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
-
-    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
-}
-
 #if CONFIG_MJPEG_ENVIDEO_HWACCEL
 const FFHWAccel ff_mjpeg_envideo_hwaccel = {
-    .p.name                = "mjpeg_envideo",
-    .p.type                = AVMEDIA_TYPE_VIDEO,
-    .p.id                  = AV_CODEC_ID_MJPEG,
-    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
-    .start_frame           = &envideo_mjpeg_start_frame,
-    .end_frame             = &envideo_mjpeg_end_frame,
-    .decode_slice          = &envideo_mjpeg_decode_slice,
-    .init                  = &envideo_mjpeg_decode_init,
-    .uninit                = &envideo_mjpeg_decode_uninit,
-    .frame_params          = &envideo_mjpeg_frame_params,
-    .update_thread_context = &envideo_mjpeg_update_thread_context,
-    .priv_data_size        = sizeof(EnvideoMJPEGDecodeContext),
-    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
+    .p.name         = "mjpeg_envideo",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_MJPEG,
+    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
+    .start_frame    = &envideo_mjpeg_start_frame,
+    .end_frame      = &envideo_mjpeg_end_frame,
+    .decode_slice   = &envideo_mjpeg_decode_slice,
+    .init           = &envideo_mjpeg_decode_init,
+    .uninit         = &envideo_mjpeg_decode_uninit,
+    .frame_params   = &envideo_mjpeg_frame_params,
+    .priv_data_size = sizeof(EnvideoMJPEGDecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

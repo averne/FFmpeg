@@ -348,32 +348,19 @@ static int envideo_vp8_decode_slice(AVCodecContext *avctx, const uint8_t *buf, u
     return ff_envideo_decode_slice(avctx, frame, false, buf + offset, buf_size - offset, false);
 }
 
-static int envideo_vp8_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
-    EnvideoVP8DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
-    EnvideoVP8DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
-
-    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
-    dst_ctx->golden_frame   = src_ctx->golden_frame;
-    dst_ctx->altref_frame   = src_ctx->altref_frame;
-    dst_ctx->previous_frame = src_ctx->previous_frame;
-
-    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
-}
-
 #if CONFIG_VP8_ENVIDEO_HWACCEL
 const FFHWAccel ff_vp8_envideo_hwaccel = {
-    .p.name                = "vp8_envideo",
-    .p.type                = AVMEDIA_TYPE_VIDEO,
-    .p.id                  = AV_CODEC_ID_VP8,
-    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
-    .start_frame           = &envideo_vp8_start_frame,
-    .end_frame             = &envideo_vp8_end_frame,
-    .decode_slice          = &envideo_vp8_decode_slice,
-    .init                  = &envideo_vp8_decode_init,
-    .uninit                = &envideo_vp8_decode_uninit,
-    .frame_params          = &ff_envideo_frame_params,
-    .update_thread_context = &envideo_vp8_update_thread_context,
-    .priv_data_size        = sizeof(EnvideoVP8DecodeContext),
-    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
+    .p.name         = "vp8_envideo",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_VP8,
+    .p.pix_fmt      = AV_PIX_FMT_ENVIDEO,
+    .start_frame    = &envideo_vp8_start_frame,
+    .end_frame      = &envideo_vp8_end_frame,
+    .decode_slice   = &envideo_vp8_decode_slice,
+    .init           = &envideo_vp8_decode_init,
+    .uninit         = &envideo_vp8_decode_uninit,
+    .frame_params   = &ff_envideo_frame_params,
+    .priv_data_size = sizeof(EnvideoVP8DecodeContext),
+    .caps_internal  = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif

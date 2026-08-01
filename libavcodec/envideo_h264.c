@@ -513,34 +513,20 @@ static int envideo_h264_decode_slice(AVCodecContext *avctx, const uint8_t *buf, 
                                    buf, buf_size, true);
 }
 
-static int envideo_h264_update_thread_context(AVCodecContext *dst, const AVCodecContext *src) {
-    EnvideoH264DecodeContext *src_ctx = src->internal->hwaccel_priv_data;
-    EnvideoH264DecodeContext *dst_ctx = dst->internal->hwaccel_priv_data;
-
-    av_refstruct_replace(&dst_ctx->shared, src_ctx->shared);
-    memcpy(dst_ctx->dpb, src_ctx->dpb, sizeof(dst_ctx->dpb));
-    dst_ctx->scratch_ref  = src_ctx->scratch_ref;
-    dst_ctx->dpb_mask     = src_ctx->dpb_mask;
-    dst_ctx->pic_idx_mask = src_ctx->pic_idx_mask;
-
-    return ff_envideo_update_thread_context(&dst_ctx->core, &src_ctx->core);
-}
-
 #if CONFIG_H264_ENVIDEO_HWACCEL
 const FFHWAccel ff_h264_envideo_hwaccel = {
-    .p.name                = "h264_envideo",
-    .p.type                = AVMEDIA_TYPE_VIDEO,
-    .p.id                  = AV_CODEC_ID_H264,
-    .p.pix_fmt             = AV_PIX_FMT_ENVIDEO,
-    .start_frame           = &envideo_h264_start_frame,
-    .end_frame             = &envideo_h264_end_frame,
-    .decode_slice          = &envideo_h264_decode_slice,
-    .init                  = &envideo_h264_decode_init,
-    .uninit                = &envideo_h264_decode_uninit,
-    .frame_params          = &ff_envideo_frame_params,
-    .update_thread_context = &envideo_h264_update_thread_context,
-    .frame_priv_data_size  = sizeof(EnvideoH264FrameData),
-    .priv_data_size        = sizeof(EnvideoH264DecodeContext),
-    .caps_internal         = HWACCEL_CAP_ASYNC_SAFE | HWACCEL_CAP_THREAD_SAFE,
+    .p.name               = "h264_envideo",
+    .p.type               = AVMEDIA_TYPE_VIDEO,
+    .p.id                 = AV_CODEC_ID_H264,
+    .p.pix_fmt            = AV_PIX_FMT_ENVIDEO,
+    .start_frame          = &envideo_h264_start_frame,
+    .end_frame            = &envideo_h264_end_frame,
+    .decode_slice         = &envideo_h264_decode_slice,
+    .init                 = &envideo_h264_decode_init,
+    .uninit               = &envideo_h264_decode_uninit,
+    .frame_params         = &ff_envideo_frame_params,
+    .frame_priv_data_size = sizeof(EnvideoH264FrameData),
+    .priv_data_size       = sizeof(EnvideoH264DecodeContext),
+    .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif
