@@ -32,6 +32,7 @@
 #include <envideo/classes/nvjpg_drv.h>
 
 #include "avcodec.h"
+#include "decode.h"
 #include "libavutil/thread.h"
 #include "libavutil/hwcontext_envideo.h"
 
